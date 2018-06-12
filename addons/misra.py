@@ -1900,7 +1900,8 @@ parser.add_argument("--quiet", help="Only print something when there is an error
 parser.add_argument("--no-summary", help="Hide summary of violations", action="store_true")
 parser.add_argument("-verify", help=argparse.SUPPRESS, action="store_true")
 parser.add_argument("-generate-table", help=argparse.SUPPRESS, action="store_true")
-parser.add_argument("file", help="Path of dump file from cppcheck")
+parser.add_argument("--files", help="Parse all filenames in file")
+parser.add_argument("file", nargs="*", help="Path of dump file from cppcheck")
 args = parser.parse_args()
 
 if args.generate_table:
@@ -1927,7 +1928,11 @@ else:
     <errors>
 """)
     if args.file:
-        parseDump(args.file)
+        for file in args.file:
+            parseDump(file)
+    if args.files:
+        for file in open(args.files).readlines():
+            parseDump(file.strip())
     if args.template == 'xml':
         sys.stderr.write("""    </errors>
 </results>
