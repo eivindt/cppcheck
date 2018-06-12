@@ -1897,5 +1897,15 @@ else:
         QUIET = True
     if args.no_summary:
         SHOW_SUMMARY = False
+    if args.template == 'xml':
+        sys.stderr.write("""<?xml version="1.0" encoding="UTF-8"?>
+<results version="2">
+    <cppcheck version="1.84"/>
+    <errors>
+""")
     if args.file:
         parseDump(args.file)
+    if args.template == 'xml':
+        sys.stderr.write("""    </errors>
+</results>
+""")
