@@ -38,7 +38,8 @@ QUIET = False
 SHOW_SUMMARY = True
 VERIFY_EXPECTED = []
 VERIFY_ACTUAL = []
-VIOLATIONS = []
+VIOLATIONS = {}
+REPORTED_ERRORS = set()
 
 
 def printStatus(*args, **kwargs):
@@ -55,22 +56,30 @@ def reportError(location, num1, num2):
     else:
         num = num1 * 100 + num2
         id = 'misra-c2012-' + str(num1) + '.' + str(num2)
+        severity = "style"
         if num in ruleTexts:
-            errmsg = ruleTexts[num] + ' [' + id + ']'
+            errmsg = ruleTexts[num].text + ' [' + id + ']'
+            severity = ruleTexts[num].cppcheck_severity
         elif len(ruleTexts) == 0:
             errmsg = 'misra violation (use --rule-texts=<file> to get proper output) [' + id + ']'
         else:
             return
+
+        if (location.file, location.linenr, id) in REPORTED_ERRORS:
+            return
         formattedMsg = cppcheckdata.reportError(args.template,
                                                 callstack=[(location.file, location.linenr)],
-                                                severity='style',
+                                                severity=severity,
                                                 message = errmsg,
                                                 errorId = id,
                                                 suppressions = suppressions)
         if formattedMsg:
             sys.stderr.write(formattedMsg)
             sys.stderr.write('\n')
-            VIOLATIONS.append(errmsg)
+            if not severity in VIOLATIONS:
+                VIOLATIONS[severity] = []
+            VIOLATIONS[severity].append(id)
+            REPORTED_ERRORS.add((location.file, location.linenr, id))
 
 
 def simpleMatch(token, pattern):
@@ -1605,6 +1614,26 @@ def setSuppressionList(suppressionlist):
                 suppressRules[num1] = {num2: True}
 
 
+class Rule:
+    def __init__(self, num1, num2):
+        self.num1 = num1
+        self.num2 = num2
+        self.text = ''
+        self.severity = 'style'
+
+    @property
+    def num(self):
+        return self.num1 * 100 + self.num2
+
+    @property
+    def cppcheck_severity(self):
+        return self.SEVERITY_MAP[self.severity]
+
+    def __repr__(self):
+        return "%d.%d %s" % (self.num1, self.num2, self.severity)
+
+    SEVERITY_MAP = { 'Required': 'warning', 'Mandatory': 'error', 'Advisory': 'information' }
+
 def loadRuleTexts(filename):
     num1 = 0
     num2 = 0
@@ -1615,13 +1644,14 @@ def loadRuleTexts(filename):
     Choice_pattern = re.compile(r'^[ ]*(Advisory|Required|Mandatory)$')
     xA_Z_pattern = re.compile(r'^[#A-Z].*')
     a_z_pattern = re.compile(r'^[a-z].*')
+    rule = None
     for line in open(filename, 'rt'):
         line = line.replace('\r', '').replace('\n', '')
         if len(line) == 0:
-            if ruleText:
+            if rule:
                 num1 = 0
                 num2 = 0
-            ruleText = False
+            rule = None
             continue
         if not appendixA:
             if line.find('Appendix A') >= 0 and line.find('Summary of guidelines') >= 10:
@@ -1633,19 +1663,19 @@ def loadRuleTexts(filename):
         if res:
             num1 = int(res.group(1))
             num2 = int(res.group(2))
-            ruleText = False
+            rule = Rule(num1, num2)
             continue
         if Choice_pattern.match(line):
-            ruleText = False
+            if rule:
+                rule.severity = line
         elif xA_Z_pattern.match(line):
-            if ruleText:
-                num2 = num2 + 1
-            num = num1 * 100 + num2
-            ruleTexts[num] = line
-            ruleText = True
-        elif ruleText and a_z_pattern.match(line):
-            num = num1 * 100 + num2
-            ruleTexts[num] = ruleTexts[num] + ' ' + line
+            if rule:
+            #    num2 = num2 + 1
+            #rule = Rule(num1, num2)
+                rule.text = line
+                ruleTexts[rule.num] = rule
+        elif rule and a_z_pattern.match(line):
+            ruleTexts[rule.num].text = ruleTexts[rule.num].text + ' ' + line
             continue
 
 
@@ -1828,13 +1858,6 @@ def parseDump(dumpfile):
             if actual not in VERIFY_EXPECTED:
                 print('Not expected: ' + actual)
                 exitCode = 1
-    else:
-        if len(VIOLATIONS) > 0:
-            if SHOW_SUMMARY:
-                print("\nRule violations found: %d\n" % (len(VIOLATIONS)))
-            exitCode = 1
-
-    sys.exit(exitCode)
 
 
 RULE_TEXTS_HELP = '''Path to text file of MISRA rules
@@ -1909,3 +1932,21 @@ else:
         sys.stderr.write("""    </errors>
 </results>
 """)
+    if len(VIOLATIONS) > 0:
+        if SHOW_SUMMARY:
+            print("\nRule violations found: %s\n" % ("\t".join([ "%s: %d" % (viol, len(VIOLATIONS[viol])) for viol in VIOLATIONS.keys()])))
+            rules_violated = {}
+            for severity, ids in VIOLATIONS.items():
+                for id in ids:
+                    rules_violated[id] = rules_violated.get(id, 0) + 1
+            print("Misra rules violated:")
+            convert = lambda text: int(text) if text.isdigit() else text
+            misra_sort = lambda key: [ convert(c) for c in re.split('[\.-]([0-9]*)', key) ]
+            for misra_id in sorted(rules_violated.keys(), key=misra_sort):
+                num = misra_id[len("misra-c2012-"):]
+                num = int(num[:num.index(".")]) * 100 + int(num[num.index(".")+1:])
+                print("\t%15s (%s): %d" % (misra_id, ruleTexts[num].severity, rules_violated[misra_id]))
+            
+        exitCode = 1
+
+    sys.exit(exitCode)
