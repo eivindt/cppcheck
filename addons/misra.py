@@ -557,6 +557,9 @@ class MisraChecker:
         # List of formatted violation messages
         self.violations         = list()
 
+        # Set of reported violations
+        self.reported_violations = set()
+
         # if --rule-texts is specified this dictionary
         # is loaded with descriptions of each rule
         # by rule number (in hundreds).
@@ -1905,9 +1908,11 @@ class MisraChecker:
 
                 self.addSuppressedRule(ruleNum)
 
-
     def reportError(self, location, num1, num2):
         ruleNum = num1 * 100 + num2
+
+        if (location.file, location.linenr, num1, num2) in self.reported_violations:
+            return
 
         if VERIFY:
             self.verify_actual.append(str(location.linenr) + ':' + str(num1) + '.' + str(num2))
@@ -1932,7 +1937,7 @@ class MisraChecker:
                 sys.stderr.write(formattedMsg)
                 sys.stderr.write('\n')
                 self.violations.append(errmsg)
-
+                self.reported_violations.add((location.file, location.linenr, num1, num2))
 
     def loadRuleTexts(self, filename):
         num1 = 0
