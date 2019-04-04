@@ -157,6 +157,7 @@ div.verbose div.content {
     border-right: thin solid #aaa;
     color: lightgray;
     padding-right: 6px;
+    vertical-align: top;
 }
 
 #footer {
