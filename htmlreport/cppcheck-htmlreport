@@ -374,6 +374,10 @@ class CppCheckHandler(XmlContentHandler):
                 'info': attributes.get('info')
             })
 
+def valid_identifier(_id):
+    """ Replace invalid characters with underscores. """
+    return _id.replace(".", "_")
+
 if __name__ == '__main__':
     # Configure all the options this little utility is using.
     parser = optparse.OptionParser()
@@ -563,7 +567,7 @@ if __name__ == '__main__':
         stat_fmt = "            <tr><td><input type='checkbox' onclick='toggle_class_visibility(this.id)' id='{}' name='{}' checked></td><td>{}</td><td>{}</td></tr>"
         for occurrences in reversed(range(cnt_min, cnt_max + 1)):
             for _id in [k for k, v in sorted(counter.items()) if v == occurrences]:
-                stat_html.append(stat_fmt.format(_id, _id, dict(counter.most_common())[_id], _id))
+                stat_html.append(stat_fmt.format(valid_identifier(_id), _id, dict(counter.most_common())[_id], _id))
 
         output_file.write(HTML_HEAD.replace('id="menu" dir="rtl"', 'id="menu_index"', 1).replace("Defects:", "Defect summary;", 1) % (options.title, '', options.title, '', ''))
         output_file.write('       <table>')
@@ -611,16 +615,16 @@ if __name__ == '__main__':
                     if error['id'] == 'missingInclude':
                         output_file.write(
                             '\n         <tr class="%s"><td></td><td>%s</td><td></td><td>%s</td><td>%s</td></tr>' %
-                            (error['id'], error['id'], error['severity'], error['msg']))
+                            (valid_identifier(error['id']), error['id'], error['severity'], error['msg']))
                     elif (error['id'] == 'unmatchedSuppression') and filename.endswith('*'):
                         output_file.write(
                             '\n         <tr class="%s"><td></td><td>%s</td><td></td><td>%s</td><td %s>%s</td></tr>' %
-                            (error['id'], error['id'], error['severity'], error_class,
+                            (valid_identifier(error['id']), error['id'], error['severity'], error_class,
                              error['msg']))
                     else:
                         output_file.write(
                             '\n       <tr class="%s"><td><a href="%s#line-%d">%d</a></td><td>%s</td><td>%s</td><td>%s</td><td %s>%s</td></tr>' %
-                            (error['id'], data['htmlfile'], error['line'], error['line'],
+                            (valid_identifier(error['id']), data['htmlfile'], error['line'], error['line'],
                              error['id'], cwe_url, error['severity'], error_class,
                              error['msg']))
 
