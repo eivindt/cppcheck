@@ -9,8 +9,6 @@ License: No restrictions, use this as you need.
 import xml.etree.ElementTree as ET
 import argparse
 from fnmatch import fnmatch
-import json
-import sys
 
 
 class Directive:
@@ -34,12 +32,11 @@ class Directive:
     str = None
     file = None
     linenr = None
-    column = 0
 
     def __init__(self, element):
         self.str = element.get('str')
         self.file = element.get('file')
-        self.linenr = int(element.get('linenr'))
+        self.linenr = element.get('linenr')
 
 
 class ValueType:
@@ -88,6 +85,7 @@ class ValueType:
         return self.typeScope and self.typeScope.type == "Enum"
 
 
+
 class Token:
     """
     Token class. Contains information about each token in the source code.
@@ -118,7 +116,6 @@ class Token:
         isLogicalOp        Is this token a logical operator: && ||
         isUnsigned         Is this token a unsigned type
         isSigned           Is this token a signed type
-        isExpandedMacro    Is this token a expanded macro token
         varId              varId for token, each variable has a unique non-zero id
         variable           Variable information for this token. See the Variable class.
         function           If this token points at a function call, this attribute has the Function
@@ -131,7 +128,6 @@ class Token:
         astOperand2        ast operand2
         file               file name
         linenr             line number
-        column             column
 
     To iterate through all tokens use such code:
     @code
@@ -166,7 +162,6 @@ class Token:
     isLogicalOp = False
     isUnsigned = False
     isSigned = False
-    isExpandedMacro = False
     varId = None
     variableId = None
     variable = None
@@ -188,7 +183,6 @@ class Token:
 
     file = None
     linenr = None
-    column = None
 
     def __init__(self, element):
         self.Id = element.get('id')
@@ -225,12 +219,9 @@ class Token:
                 self.isComparisonOp = True
             elif element.get('isLogicalOp'):
                 self.isLogicalOp = True
-        if element.get('isExpandedMacro'):
-            self.isExpandedMacro = True
         self.linkId = element.get('link')
         self.link = None
-        if element.get('varId'):
-            self.varId = int(element.get('varId'))
+        self.varId = element.get('varId')
         self.variableId = element.get('variable')
         self.variable = None
         self.functionId = element.get('function')
@@ -250,8 +241,7 @@ class Token:
         self.astOperand2Id = element.get('astOperand2')
         self.astOperand2 = None
         self.file = element.get('file')
-        self.linenr = int(element.get('linenr'))
-        self.column = int(element.get('column'))
+        self.linenr = element.get('linenr')
 
     def setId(self, IdMap):
         self.scope = IdMap[self.scopeId]
@@ -291,8 +281,6 @@ class Scope:
         className      Name of this scope.
                        For a function scope, this is the function name;
                        For a class scope, this is the class name.
-        function       If this scope belongs at a function call, this attribute
-                       has the Function information. See the Function class.
         type           Type of scope: Global, Function, Class, If, While
     """
 
@@ -302,18 +290,13 @@ class Scope:
     bodyEndId = None
     bodyEnd = None
     className = None
-    functionId = None
-    function = None
     nestedInId = None
     nestedIn = None
     type = None
-    isExecutable = None
 
     def __init__(self, element):
         self.Id = element.get('id')
         self.className = element.get('className')
-        self.functionId = element.get('function')
-        self.function = None
         self.bodyStartId = element.get('bodyStart')
         self.bodyStart = None
         self.bodyEndId = element.get('bodyEnd')
@@ -321,13 +304,11 @@ class Scope:
         self.nestedInId = element.get('nestedIn')
         self.nestedIn = None
         self.type = element.get('type')
-        self.isExecutable = (self.type in ('Function', 'If', 'Else', 'For', 'While', 'Do', 'Switch', 'Try', 'Catch', 'Unconditional', 'Lambda'))
 
     def setId(self, IdMap):
         self.bodyStart = IdMap[self.bodyStartId]
         self.bodyEnd = IdMap[self.bodyEndId]
         self.nestedIn = IdMap[self.nestedInId]
-        self.function = IdMap[self.functionId]
 
 
 class Function:
@@ -335,12 +316,6 @@ class Function:
     Information about a function
     C++ class:
     http://cppcheck.net/devinfo/doxyoutput/classFunction.html
-
-    Attributes
-        argument                Argument list
-        tokenDef                Token in function definition
-        isVirtual               Is this function is virtual
-        isImplicitlyVirtual     Is this function is virtual this in the base classes
     """
 
     Id = None
@@ -381,16 +356,13 @@ class Variable:
     http://cppcheck.net/devinfo/doxyoutput/classVariable.html
 
     Attributes:
-        nameToken       Name token in variable declaration
-        typeStartToken  Start token of variable declaration
-        typeEndToken    End token of variable declaration
-        access          Global/Local/Namespace/Public/Protected/Public/Throw/Argument
-        scope           Variable scope
+        nameToken       name token in variable declaration
+        typeStartToken  start token of variable declaration
+        typeEndToken    end token of variable declaration
         isArgument      Is this variable a function argument?
         isArray         Is this variable an array?
         isClass         Is this variable a class or struct?
         isConst         Is this variable a const variable?
-        isGlobal        Is this variable a global variable?
         isExtern        Is this variable an extern variable?
         isLocal         Is this variable a local variable?
         isPointer       Is this variable a pointer
@@ -406,15 +378,11 @@ class Variable:
     typeStartToken = None
     typeEndTokenId = None
     typeEndToken = None
-    access = None
-    scopeId = None
-    scope = None
     isArgument = False
     isArray = False
     isClass = False
     isConst = False
     isExtern = False
-    isGlobal = False
     isLocal = False
     isPointer = False
     isReference = False
@@ -429,14 +397,10 @@ class Variable:
         self.typeStartToken = None
         self.typeEndTokenId = element.get('typeEndToken')
         self.typeEndToken = None
-        self.access = element.get('access')
-        self.scopeId = element.get('scope')
-        self.scope = None
         self.isArgument = element.get('isArgument') == 'true'
         self.isArray = element.get('isArray') == 'true'
         self.isClass = element.get('isClass') == 'true'
         self.isConst = element.get('isConst') == 'true'
-        self.isGlobal = element.get('access') == 'Global'
         self.isExtern = element.get('isExtern') == 'true'
         self.isLocal = element.get('isLocal') == 'true'
         self.isPointer = element.get('isPointer') == 'true'
@@ -450,7 +414,6 @@ class Variable:
         self.nameToken = IdMap[self.nameTokenId]
         self.typeStartToken = IdMap[self.typeStartTokenId]
         self.typeEndToken = IdMap[self.typeEndTokenId]
-        self.scope = IdMap[self.scopeId]
 
 
 class ValueFlow:
@@ -473,45 +436,23 @@ class ValueFlow:
         Value class
 
         Attributes:
-            intvalue         integer value
-            tokvalue         token value
-            floatvalue       float value
-            containerSize    container size
-            condition        condition where this Value comes from
-            valueKind        'known' or 'possible'
-            inconclusive     Is value inconclusive?
+            intvalue     integer value
+            tokvalue     token value
+            condition    condition where this Value comes from
         """
 
         intvalue = None
         tokvalue = None
-        floatvalue = None
-        containerSize = None
         condition = None
-        valueKind = None
-        inconclusive = False
-
-        def isKnown(self):
-            return self.valueKind and self.valueKind == 'known'
-
-        def isPossible(self):
-            return self.valueKind and self.valueKind == 'possible'
 
         def __init__(self, element):
             self.intvalue = element.get('intvalue')
             if self.intvalue:
                 self.intvalue = int(self.intvalue)
             self.tokvalue = element.get('tokvalue')
-            self.floatvalue = element.get('floatvalue')
-            self.containerSize = element.get('container-size')
             self.condition = element.get('condition-line')
             if self.condition:
                 self.condition = int(self.condition)
-            if element.get('known'):
-                self.valueKind = 'known'
-            elif element.get('possible'):
-                self.valueKind = 'possible'
-            if element.get('inconclusive'):
-                self.inconclusive = True
 
     def __init__(self, element):
         self.Id = element.get('id')
@@ -543,7 +484,7 @@ class Suppression:
         self.symbolName = element.get('symbolName')
 
     def isMatch(self, file, line, message, errorId):
-        if ((self.fileName is None or fnmatch(file, self.fileName))
+        if (fnmatch(file, self.fileName)
             and (self.lineNumber is None or line == self.lineNumber)
             and (self.symbolName is None or fnmatch(message, '*'+self.symbolName+'*'))
             and fnmatch(errorId, self.errorId)):
@@ -586,9 +527,6 @@ class Configuration:
         arguments = []
 
         for element in confignode:
-            if element.tag == "standards":
-                self.standards = Standards(element)
-
             if element.tag == 'directivelist':
                 for directive in element:
                     self.directives.append(Directive(directive))
@@ -680,21 +618,6 @@ class Platform:
         self.long_long_bit = int(platformnode.get('long_long_bit'))
         self.pointer_bit = int(platformnode.get('pointer_bit'))
 
-class Standards:
-    """
-    Standards class
-    This class contains versions of standards that were used for the cppcheck
-
-    Attributes:
-        c            C Standard used
-        cpp          C++ Standard used
-        posix        If Posix was used
-    """
-
-    def __init__(self, standardsnode):
-        self.c = standardsnode.find("c").get("version")
-        self.cpp = standardsnode.find("cpp").get("version")
-        self.posix = standardsnode.find("posix") != None
 
 class CppcheckData:
     """
@@ -774,25 +697,6 @@ class CppcheckData:
                 self.configurations.append(Configuration(cfgnode))
 
 
-# Get function arguments
-def getArgumentsRecursive(tok, arguments):
-    if tok is None:
-        return
-    if tok.str == ',':
-        getArgumentsRecursive(tok.astOperand1, arguments)
-        getArgumentsRecursive(tok.astOperand2, arguments)
-    else:
-        arguments.append(tok)
-
-
-def getArguments(ftok):
-    if (not ftok.isName) or (ftok.next is None) or ftok.next.str != '(':
-        return None
-    args = []
-    getArgumentsRecursive(ftok.next.astOperand2, args)
-    return args
-
-
 def parsedump(filename):
     """
     parse a cppcheck dump file
@@ -856,27 +760,63 @@ def ArgumentParser():
     return parser
 
 
-def simpleMatch(token, pattern):
-    for p in pattern.split(' '):
-        if not token or token.str != p:
-            return False
-        token = token.next
-    return True
+def reportError(template, callstack=(), severity='', message='', errorId='', suppressions=None, outputFunc=None):
+    """
+        Format an error message according to the template.
 
+        :param template: format string, or 'gcc', 'vs' or 'edit'.
+        :param callstack: e.g. [['file1.cpp',10],['file2.h','20'], ... ]
+        :param severity: e.g. 'error', 'warning' ...
+        :param id: message ID.
+        :param message: message text.
+    """
+    # expand predefined templates
+    if template == 'gcc':
+        template = '{file}:{line}: {severity}: {message}'
+    elif template == 'vs':
+        template = '{file}({line}): {severity}: {message}'
+    elif template == 'edit':
+        template = '{file} +{line}: {severity}: {message}'
+    elif template == 'xml':
+        return reportErrorXML(callstack, severity, message, errorId, suppressions, outputFunc)
+    # compute 'callstack}, {file} and {line} replacements
+    stack = ' -> '.join('[' + f + ':' + str(l) + ']' for (f, l) in callstack)
+    file = callstack[-1][0]
+    line = str(callstack[-1][1])
 
-def reportError(location, severity, message, addon, errorId, extra=''):
-    if '--cli' in sys.argv:
-        msg = { 'file': location.file,
-                'linenr': location.linenr,
-                'column': location.column,
-                'severity': severity,
-                'message': message,
-                'addon': addon,
-                'errorId': errorId,
-                'extra': extra}
-        sys.stdout.write(json.dumps(msg) + '\n')
-    else:
-        loc = '[%s:%i]' % (location.file, location.linenr)
-        if len(extra) > 0:
-            message += ' (' + extra + ')'
-        sys.stderr.write('%s (%s) %s [%s-%s]\n' % (loc, severity, message, addon, errorId))
+    if suppressions is not None and any(suppression.isMatch(file, line, message, errorId) for suppression in suppressions):
+        return None
+
+    outputLine = template.format(callstack=stack, file=file, line=line,
+                           severity=severity, message=message, id=errorId)
+    if outputFunc is not None:
+        outputFunc(outputLine)
+    # format message
+    return outputLine
+
+def reportErrorXML(callstack, severity, message, errorId, suppressions, outputFunc):
+    """
+        Format an error message according to cppcheck's xml format.
+
+        :param callstack: e.g. [['file1.cpp',10],['file2.h','20'], ... ]
+        :param severity: e.g. 'error', 'warning' ...
+        :param id: message ID.
+        :param message: message text.
+    """
+    node = ET.Element("error")
+    if errorId:
+        node.set("id", errorId)
+    if severity:
+        node.set("severity", severity)
+    node.set("msg", message)
+
+    file = callstack[-1][0]
+    line = str(callstack[-1][1])
+    if suppressions is not None and any(suppression.isMatch(file, line, message, errorId) for suppression in suppressions):
+        return None
+
+    for filename, lineno in callstack:
+        location = ET.Element("location", { 'file': filename, 'line': str(lineno) } )
+        node.append(location)
+
+    return ET.tostring(node, encoding="unicode")
