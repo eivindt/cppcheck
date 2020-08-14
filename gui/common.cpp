@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2018 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,7 +60,7 @@ QString toFilterString(const QMap<QString,QString>& filters, bool addAllSupporte
     // We're using the description of the filters as the map keys, the file
     // name patterns are our values. The generated filter string list will
     // thus be sorted alphabetically over the descriptions.
-    for (auto k: filters.keys()) {
+    for (const auto& k: filters.keys()) {
         entries << QString("%1 (%2)").arg(k).arg(filters.value(k));
     }
 

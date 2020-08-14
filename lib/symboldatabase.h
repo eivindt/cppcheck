@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,8 +24,8 @@
 #include "config.h"
 #include "library.h"
 #include "mathlib.h"
-#include "platform.h"
 #include "token.h"
+#include "utils.h"
 
 #include <cstddef>
 #include <list>
@@ -34,6 +34,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace cppcheck {
+    class Platform;
+}
 
 class ErrorLogger;
 class Function;
@@ -101,6 +105,7 @@ public:
 
     const Token * typeStart;
     const Token * typeEnd;
+    MathLib::bigint sizeOf;
 
     Type(const Token* classDef_ = nullptr, const Scope* classScope_ = nullptr, const Scope* enclosingScope_ = nullptr) :
         classDef(classDef_),
@@ -108,7 +113,8 @@ public:
         enclosingScope(enclosingScope_),
         needInitialization(NeedInitialization::Unknown),
         typeStart(nullptr),
-        typeEnd(nullptr) {
+        typeEnd(nullptr),
+        sizeOf(0) {
         if (classDef_ && classDef_->str() == "enum")
             needInitialization = NeedInitialization::True;
         else if (classDef_ && classDef_->str() == "using") {
@@ -191,7 +197,8 @@ class CPPCHECKLIB Variable {
         fIsStlString  = (1 << 11),  /** @brief std::string|wstring|basic_string&lt;T&gt;|u16string|u32string */
         fIsFloatType  = (1 << 12),  /** @brief Floating point type */
         fIsVolatile   = (1 << 13),  /** @brief volatile */
-        fIsSmartPointer = (1 << 14)   /** @brief std::shared_ptr|unique_ptr */
+        fIsSmartPointer = (1 << 14),/** @brief std::shared_ptr|unique_ptr */
+        fIsMaybeUnused = (1 << 15), /** @brief marked [[maybe_unused]] */
     };
 
     /**
@@ -234,6 +241,10 @@ public:
           mValueType(nullptr) {
         evaluate(settings);
     }
+
+    Variable(const Token *name_, const std::string &clangType, const Token *start,
+             nonneg int index_, AccessControl access_, const Type *type_,
+             const Scope *scope_);
 
     ~Variable();
 
@@ -477,6 +488,12 @@ public:
     }
 
     /**
+     * Is variable unsigned.
+     * @return true only if variable _is_ unsigned. if the sign is unknown, false is returned.
+     */
+    bool isUnsigned() const;
+
+    /**
      * Does variable have a default value.
      * @return true if has a default falue, false if not
      */
@@ -606,6 +623,10 @@ public:
         return type() && type()->isEnumType();
     }
 
+    bool isMaybeUnused() const {
+        return getFlag(fIsMaybeUnused);
+    }
+
     const ValueType *valueType() const {
         return mValueType;
     }
@@ -615,6 +636,8 @@ public:
     AccessControl accessControl() const {
         return mAccess;
     }
+
+    std::string getTypeName() const;
 
 private:
     // only symbol database can change the type
@@ -714,10 +737,13 @@ public:
     enum Type { eConstructor, eCopyConstructor, eMoveConstructor, eOperatorEqual, eDestructor, eFunction, eLambda };
 
     Function(const Tokenizer *mTokenizer, const Token *tok, const Scope *scope, const Token *tokDef, const Token *tokArgDef);
+    explicit Function(const Token *tokenDef);
 
     const std::string &name() const {
         return tokenDef->str();
     }
+
+    std::string fullName() const;
 
     nonneg int argCount() const {
         return argumentList.size();
@@ -870,9 +896,11 @@ public:
 
     static bool returnsReference(const Function* function, bool unknown = false);
 
+    static std::vector<const Token*> findReturns(const Function* f);
+
     const Token* returnDefEnd() const {
         if (this->hasTrailingReturnType()) {
-            return Token::findsimplematch(retDef, "{");
+            return Token::findmatch(retDef, "{|;");
         } else {
             return tokenDef;
         }
@@ -1066,11 +1094,7 @@ public:
 
     void addVariable(const Token *token_, const Token *start_,
                      const Token *end_, AccessControl access_, const Type *type_,
-                     const Scope *scope_, const Settings* settings) {
-        varlist.emplace_back(token_, start_, end_, varlist.size(),
-                             access_,
-                             type_, scope_, settings);
-    }
+                     const Scope *scope_, const Settings* settings);
 
     /** @brief initialize varlist */
     void getVariableList(const Settings* settings);
@@ -1207,7 +1231,7 @@ public:
         return typeScope && typeScope->type == Scope::eEnum;
     }
 
-    MathLib::bigint typeSize(const cppcheck::Platform &platform) const;
+    MathLib::bigint typeSize(const cppcheck::Platform &platform, bool p=false) const;
 
     std::string str() const;
     std::string dump() const;
@@ -1290,7 +1314,7 @@ public:
     void validateVariables() const;
 
     /** Set valuetype in provided tokenlist */
-    void setValueTypeInTokenList(bool reportDebugWarnings);
+    void setValueTypeInTokenList(bool reportDebugWarnings, Token *tokens=nullptr);
 
     /**
      * Calculates sizeof value for given type.
@@ -1301,6 +1325,8 @@ public:
 
     /** Set array dimensions when valueflow analysis is completed */
     void setArrayDimensionsUsingValueFlow();
+
+    void clangSetVariables(const std::vector<const Variable *> &variableList);
 
 private:
     friend class Scope;
@@ -1320,6 +1346,7 @@ private:
     void createSymbolDatabaseSetFunctionPointers(bool firstPass);
     void createSymbolDatabaseSetVariablePointers();
     void createSymbolDatabaseSetTypePointers();
+    void createSymbolDatabaseSetSmartPointerType();
     void createSymbolDatabaseEnums();
     void createSymbolDatabaseEscapeFunctions();
     void createSymbolDatabaseIncompleteVars();

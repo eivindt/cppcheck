@@ -6,15 +6,31 @@ CONFIG += warn_on debug
 DEPENDPATH += . \
     ../lib
 INCLUDEPATH += . \
-    ../lib
+    ../lib \
+    ../externals/z3/include
 QT += widgets
 QT += printsupport
+QT += help
+
+# Build online help
+#onlinehelp.target = online-help.qhc
+#onlinehelp.commands = qhelpgenerator $$PWD/help/online-help.qhp -o online-help.qch ; qhelpgenerator $$PWD/help/online-help.qhcp -o online-help.qhc
+#QMAKE_EXTRA_TARGETS += onlinehelp
+#PRE_TARGETDEPS += online-help.qhc
 
 contains(LINKCORE, [yY][eE][sS]) {
     LIBS += -l../bin/cppcheck-core
     DEFINES += CPPCHECKLIB_IMPORT
 }
-LIBS += -L$$PWD/../externals
+LIBS += -L$$PWD/../externals -L$$PWD/../externals/z3/bin
+
+# z3
+win32 {
+    LIBS += -llibz3
+} else {
+    LIBS += -lz3
+}
+QMAKE_CXXFLAGS += -DUSE_Z3
 
 DESTDIR = .
 RCC_DIR = temp
@@ -51,6 +67,7 @@ RESOURCES = gui.qrc
 FORMS = about.ui \
         application.ui \
         file.ui \
+        functioncontractdialog.ui \
         mainwindow.ui \
         projectfiledialog.ui \
         resultsview.ui \
@@ -88,6 +105,7 @@ HEADERS += aboutdialog.h \
            application.h \
            applicationdialog.h \
            applicationlist.h \
+           assistant.h \
            checkstatistics.h \
            checkthread.h \
            codeeditstylecontrols.h \
@@ -99,6 +117,7 @@ HEADERS += aboutdialog.h \
            erroritem.h \
            filelist.h \
            fileviewdialog.h \
+           functioncontractdialog.h \
            mainwindow.h \
            platforms.h \
            printablereport.h \
@@ -127,6 +146,7 @@ SOURCES += aboutdialog.cpp \
            application.cpp \
            applicationdialog.cpp \
            applicationlist.cpp \
+           assistant.cpp \
            checkstatistics.cpp \
            checkthread.cpp \
            codeeditorstyle.cpp \
@@ -138,6 +158,7 @@ SOURCES += aboutdialog.cpp \
            erroritem.cpp \
            filelist.cpp \
            fileviewdialog.cpp \
+           functioncontractdialog.cpp \
            main.cpp \
            mainwindow.cpp\
            platforms.cpp \

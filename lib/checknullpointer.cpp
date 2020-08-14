@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,11 +23,11 @@
 #include "astutils.h"
 #include "errorlogger.h"
 #include "library.h"
+#include "mathlib.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
 #include "tokenize.h"
-#include "utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -39,9 +39,6 @@
 namespace {
     CheckNullPointer instance;
 }
-
-static const CWE CWE476(476U);  // NULL Pointer Dereference
-static const CWE CWE682(682U);  // Incorrect Calculation
 
 //---------------------------------------------------------------------------
 
@@ -166,6 +163,9 @@ bool CheckNullPointer::isPointerDeRef(const Token *tok, bool &unknown, const Set
         }
     }
 
+    if (tok->str() == "(" && !tok->scope()->isExecutable())
+        return false;
+
     const Token* parent = tok->astParent();
     if (!parent)
         return false;
@@ -194,8 +194,14 @@ bool CheckNullPointer::isPointerDeRef(const Token *tok, bool &unknown, const Set
         return false;
 
     // read/write member variable
-    if (firstOperand && parent->str() == "." && (!parent->astParent() || parent->astParent()->str() != "&")) {
-        if (!parent->astParent() || parent->astParent()->str() != "(" || parent->astParent() == tok->previous())
+    if (firstOperand && parent->originalName() == "->" && (!parent->astParent() || parent->astParent()->str() != "&")) {
+        if (!parent->astParent())
+            return true;
+        if (!Token::Match(parent->astParent()->previous(), "if|while|for|switch ("))
+            return true;
+        if (!Token::Match(parent->astParent()->previous(), "%name% ("))
+            return true;
+        if (parent->astParent() == tok->previous())
             return true;
         unknown = true;
         return false;
@@ -251,76 +257,11 @@ bool CheckNullPointer::isPointerDeRef(const Token *tok, bool &unknown, const Set
 }
 
 
-void CheckNullPointer::nullPointerLinkedList()
-{
-
-    if (!mSettings->isEnabled(Settings::WARNING))
-        return;
-
-    const SymbolDatabase* const symbolDatabase = mTokenizer->getSymbolDatabase();
-
-    // looping through items in a linked list in a inner loop.
-    // Here is an example:
-    //    for (const Token *tok = tokens; tok; tok = tok->next) {
-    //        if (tok->str() == "hello")
-    //            tok = tok->next;   // <- tok might become a null pointer!
-    //    }
-    for (const Scope &forScope : symbolDatabase->scopeList) {
-        const Token* const tok1 = forScope.classDef;
-        // search for a "for" scope..
-        if (forScope.type != Scope::eFor || !tok1)
-            continue;
-
-        // is there any dereferencing occurring in the for statement
-        const Token* end2 = tok1->linkAt(1);
-        for (const Token *tok2 = tok1->tokAt(2); tok2 != end2; tok2 = tok2->next()) {
-            // Dereferencing a variable inside the "for" parentheses..
-            if (Token::Match(tok2, "%var% . %name%")) {
-                // Is this variable a pointer?
-                const Variable *var = tok2->variable();
-                if (!var || !var->isPointer())
-                    continue;
-
-                // Variable id for dereferenced variable
-                const unsigned int varid(tok2->varId());
-
-                if (Token::Match(tok2->tokAt(-2), "%varid% ?", varid))
-                    continue;
-
-                // Check usage of dereferenced variable in the loop..
-                // TODO: Move this to ValueFlow
-                for (const Scope *innerScope : forScope.nestedList) {
-                    if (innerScope->type != Scope::eWhile)
-                        continue;
-
-                    // TODO: are there false negatives for "while ( %varid% ||"
-                    if (Token::Match(innerScope->classDef->next(), "( %varid% &&|)", varid)) {
-                        // Make sure there is a "break" or "return" inside the loop.
-                        // Without the "break" a null pointer could be dereferenced in the
-                        // for statement.
-                        for (const Token *tok4 = innerScope->bodyStart; tok4; tok4 = tok4->next()) {
-                            if (tok4 == forScope.bodyEnd) {
-                                const ValueFlow::Value v(innerScope->classDef, 0LL);
-                                nullPointerError(tok1, var->name(), &v, false);
-                                break;
-                            }
-
-                            // There is a "break" or "return" inside the loop.
-                            // TODO: there can be false negatives. There could still be
-                            //       execution paths that are not properly terminated
-                            else if (tok4->str() == "break" || tok4->str() == "return")
-                                break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 static bool isNullablePointer(const Token* tok, const Settings* settings)
 {
     if (!tok)
+        return false;
+    if (Token::simpleMatch(tok, "new") && tok->varId() == 0)
         return false;
     if (astIsPointer(tok))
         return true;
@@ -372,7 +313,6 @@ void CheckNullPointer::nullPointerByDeRefAndChec()
 
 void CheckNullPointer::nullPointer()
 {
-    nullPointerLinkedList();
     nullPointerByDeRefAndChec();
 }
 
@@ -482,14 +422,14 @@ void CheckNullPointer::nullPointerError(const Token *tok, const std::string &var
     const std::string errmsgdefarg("$symbol:" + varname + "\nPossible null pointer dereference if the default parameter value is used: $symbol");
 
     if (!tok) {
-        reportError(tok, Severity::error, "nullPointer", "Null pointer dereference", CWE476, false);
-        reportError(tok, Severity::warning, "nullPointerDefaultArg", errmsgdefarg, CWE476, false);
-        reportError(tok, Severity::warning, "nullPointerRedundantCheck", errmsgcond, CWE476, false);
+        reportError(tok, Severity::error, "nullPointer", "Null pointer dereference", CWE_NULL_POINTER_DEREFERENCE, false);
+        reportError(tok, Severity::warning, "nullPointerDefaultArg", errmsgdefarg, CWE_NULL_POINTER_DEREFERENCE, false);
+        reportError(tok, Severity::warning, "nullPointerRedundantCheck", errmsgcond, CWE_NULL_POINTER_DEREFERENCE, false);
         return;
     }
 
     if (!value) {
-        reportError(tok, Severity::error, "nullPointer", "Null pointer dereference", CWE476, inconclusive);
+        reportError(tok, Severity::error, "nullPointer", "Null pointer dereference", CWE_NULL_POINTER_DEREFERENCE, inconclusive);
         return;
     }
 
@@ -499,9 +439,9 @@ void CheckNullPointer::nullPointerError(const Token *tok, const std::string &var
     const ErrorPath errorPath = getErrorPath(tok, value, "Null pointer dereference");
 
     if (value->condition) {
-        reportError(errorPath, Severity::warning, "nullPointerRedundantCheck", errmsgcond, CWE476, inconclusive || value->isInconclusive());
+        reportError(errorPath, Severity::warning, "nullPointerRedundantCheck", errmsgcond, CWE_NULL_POINTER_DEREFERENCE, inconclusive || value->isInconclusive());
     } else if (value->defaultArg) {
-        reportError(errorPath, Severity::warning, "nullPointerDefaultArg", errmsgdefarg, CWE476, inconclusive || value->isInconclusive());
+        reportError(errorPath, Severity::warning, "nullPointerDefaultArg", errmsgdefarg, CWE_NULL_POINTER_DEREFERENCE, inconclusive || value->isInconclusive());
     } else {
         std::string errmsg;
         errmsg = std::string(value->isKnown() ? "Null" : "Possible null") + " pointer dereference";
@@ -512,7 +452,7 @@ void CheckNullPointer::nullPointerError(const Token *tok, const std::string &var
                     value->isKnown() ? Severity::error : Severity::warning,
                     "nullPointer",
                     errmsg,
-                    CWE476, inconclusive || value->isInconclusive());
+                    CWE_NULL_POINTER_DEREFERENCE, inconclusive || value->isInconclusive());
     }
 }
 
@@ -535,18 +475,7 @@ void CheckNullPointer::arithmetic()
                 continue;
             if (numericOperand && numericOperand->valueType() && !numericOperand->valueType()->isIntegral())
                 continue;
-            MathLib::bigint checkValue = 0;
-            // When using an assign op, the value read from
-            // valueflow has already been updated, so instead of
-            // checking for zero we check that the value is equal
-            // to RHS
-            if (tok->astOperand2() && tok->astOperand2()->hasKnownIntValue()) {
-                if (tok->str() == "-=")
-                    checkValue -= tok->astOperand2()->values().front().intvalue;
-                else if (tok->str() == "+=")
-                    checkValue = tok->astOperand2()->values().front().intvalue;
-            }
-            const ValueFlow::Value *value = pointerOperand->getValue(checkValue);
+            const ValueFlow::Value* value = pointerOperand->getValue(0);
             if (!value)
                 continue;
             if (!mSettings->inconclusive && value->isInconclusive())
@@ -585,7 +514,7 @@ void CheckNullPointer::pointerArithmeticError(const Token* tok, const ValueFlow:
                 Severity::error,
                 "nullPointerArithmetic",
                 errmsg,
-                CWE682,
+                CWE_INCORRECT_CALCULATION,
                 inconclusive);
 }
 
@@ -603,7 +532,7 @@ void CheckNullPointer::redundantConditionWarning(const Token* tok, const ValueFl
                 Severity::warning,
                 "nullPointerArithmeticRedundantCheck",
                 errmsg,
-                CWE682,
+                CWE_INCORRECT_CALCULATION,
                 inconclusive);
 }
 
@@ -661,7 +590,7 @@ bool CheckNullPointer::analyseWholeProgram(const CTU::FileInfo *ctu, const std::
                 if (warning == 1 && !settings.isEnabled(Settings::WARNING))
                     break;
 
-                const std::list<ErrorLogger::ErrorMessage::FileLocation> &locationList =
+                const std::list<ErrorMessage::FileLocation> &locationList =
                     ctu->getErrorPath(CTU::FileInfo::InvalidValueType::null,
                                       unsafeUsage,
                                       callsMap,
@@ -671,12 +600,12 @@ bool CheckNullPointer::analyseWholeProgram(const CTU::FileInfo *ctu, const std::
                 if (locationList.empty())
                     continue;
 
-                const ErrorLogger::ErrorMessage errmsg(locationList,
-                                                       emptyString,
-                                                       warning ? Severity::warning : Severity::error,
-                                                       "Null pointer dereference: " + unsafeUsage.myArgumentName,
-                                                       "ctunullpointer",
-                                                       CWE476, false);
+                const ErrorMessage errmsg(locationList,
+                                          emptyString,
+                                          warning ? Severity::warning : Severity::error,
+                                          "Null pointer dereference: " + unsafeUsage.myArgumentName,
+                                          "ctunullpointer",
+                                          CWE_NULL_POINTER_DEREFERENCE, false);
                 errorLogger.reportErr(errmsg);
 
                 foundErrors = true;

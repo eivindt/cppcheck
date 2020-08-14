@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,12 +42,12 @@ private:
         settings0.addEnabled("style");
         settings2.addEnabled("style");
 
-        TEST_CASE(simplifyTypedef1)
-        TEST_CASE(simplifyTypedef2)
-        TEST_CASE(simplifyTypedef3)
-        TEST_CASE(simplifyTypedef4)
-        TEST_CASE(simplifyTypedef5)
-        TEST_CASE(simplifyTypedef6)
+        TEST_CASE(simplifyTypedef1);
+        TEST_CASE(simplifyTypedef2);
+        TEST_CASE(simplifyTypedef3);
+        TEST_CASE(simplifyTypedef4);
+        TEST_CASE(simplifyTypedef5);
+        TEST_CASE(simplifyTypedef6);
         TEST_CASE(simplifyTypedef7);
         TEST_CASE(simplifyTypedef8);
         TEST_CASE(simplifyTypedef9);
@@ -165,6 +165,9 @@ private:
         TEST_CASE(simplifyTypedef127); // ticket #8878
         TEST_CASE(simplifyTypedef128); // ticket #9053
         TEST_CASE(simplifyTypedef129);
+        TEST_CASE(simplifyTypedef130); // ticket #9446
+        TEST_CASE(simplifyTypedef131); // ticket #9446
+        TEST_CASE(simplifyTypedef132); // ticket #9739 - using
 
         TEST_CASE(simplifyTypedefFunction1);
         TEST_CASE(simplifyTypedefFunction2); // ticket #1685
@@ -190,9 +193,6 @@ private:
 
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-
-        if (simplify)
-            tokenizer.simplifyTokenList2();
 
         return tokenizer.tokens()->stringifyList(nullptr, !simplify);
     }
@@ -507,8 +507,8 @@ private:
                             "};";
 
         // Tokenize and check output..
-        tok(code, true, Settings::Native, false);
-        ASSERT_EQUALS("", errout.str());
+        TODO_ASSERT_THROW(tok(code, true, Settings::Native, false), InternalError); // TODO: Do not throw exception
+        //ASSERT_EQUALS("", errout.str());
     }
 
     void simplifyTypedef15() {
@@ -723,8 +723,8 @@ private:
                             "void    addCallback1(Callback callback, int j) { }";
 
         const char expected[] =
-            "void addCallback ( bool * callback ) { } "
-            "void addCallback1 ( bool * callback , int j ) { }";
+            "void addCallback ( bool ( * callback ) ( ) ) { } "
+            "void addCallback1 ( bool ( * callback ) ( ) , int j ) { }";
 
         ASSERT_EQUALS(expected, tok(code, false));
     }
@@ -738,9 +738,9 @@ private:
                                 "}";
 
             const char expected[] =
-                "void g ( int * f ) "
+                "void g ( int ( * f ) ( ) ) "
                 "{ "
-                "int * f2 ; f2 = ( int * ) f ; "
+                "int ( * f2 ) ( ) ; f2 = ( int * ) f ; "
                 "}";
 
             ASSERT_EQUALS(expected, tok(code, false));
@@ -754,9 +754,9 @@ private:
                                 "}";
 
             const char expected[] =
-                "void g ( int * f ) "
+                "void g ( int ( * f ) ( ) ) "
                 "{ "
-                "int * f2 ; f2 = static_cast < int * > ( f ) ; "
+                "int ( * f2 ) ( ) ; f2 = static_cast < int * > ( f ) ; "
                 "}";
 
             ASSERT_EQUALS(expected, tok(code, false));
@@ -1076,7 +1076,7 @@ private:
             "class X { } ; "
             "int main ( ) "
             "{ "
-            "X * * Foo ; Foo = new X ( * ) ( const X & ) [ 2 ] ; "
+            "X ( * * Foo ) ( ) ; Foo = new X ( * ) ( const X & ) [ 2 ] ; "
             "}";
 
         ASSERT_EQUALS(expected, tok(code, false));
@@ -1352,7 +1352,7 @@ private:
                                 "F f;";
 
             // The expected result..
-            const char expected[] = "void * f ;";
+            const char expected[] = "void ( * f ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code));
         }
     }
@@ -1487,7 +1487,7 @@ private:
         // The expected result..
         const char expected[] = "struct C { "
                                 ""
-                                "const void * pr ; " // this gets simplified to a regular pointer
+                                "const void ( * pr ) ( ) ; "
                                 "operatorconstvoid(*)()& ( ) { return pr ; } "
                                 "} ;";
         ASSERT_EQUALS(expected, tok(code));
@@ -1525,7 +1525,7 @@ private:
                                 "vec2_t coords[4][5][6+1] = {1,2,3,4,5,6,7,8};";
 
             // The expected result..
-            const char expected[] = "int coords [ 4 ] [ 5 ] [ 7 ] [ 2 ] = { 1 , 2 , 3 , 4 , 5 , 6 , 7 , 8 } ;";
+            const char expected[] = "int coords [ 4 ] [ 5 ] [ 6 + 1 ] [ 2 ] = { 1 , 2 , 3 , 4 , 5 , 6 , 7 , 8 } ;";
             ASSERT_EQUALS(expected, tok(code));
             ASSERT_EQUALS("", errout.str());
         }
@@ -1550,7 +1550,7 @@ private:
                             "    localEntitiyAddFunc_t f;\n"
                             "}";
         // The expected result..
-        const char expected[] = "enum qboolean { qfalse , qtrue } ; void f ( ) { qboolean b ; qboolean * f ; }";
+        const char expected[] = "enum qboolean { qfalse , qtrue } ; void f ( ) { qboolean b ; qboolean ( * f ) ( ) ; }";
         ASSERT_EQUALS(expected, tok(code, false));
         ASSERT_EQUALS("", errout.str());
     }
@@ -1667,7 +1667,7 @@ private:
         const char code[] = "typedef FMAC1 void (* a) ();\n"
                             "void *(*b) ();";
         const std::string actual(tok(code));
-        ASSERT_EQUALS("void * * b ;", actual);
+        ASSERT_EQUALS("void * ( * b ) ( ) ;", actual);
         ASSERT_EQUALS("", errout.str());
     }
 
@@ -1808,7 +1808,7 @@ private:
 
     void simplifyTypedef77() { // ticket #2554
         const char code[] = "typedef char Str[10]; int x = sizeof(Str);";
-        const char expected[] = "int x ; x = 10 ;";
+        const char expected[] = "int x ; x = sizeof ( char [ 10 ] ) ;";
         ASSERT_EQUALS(expected, tok(code));
     }
 
@@ -2118,7 +2118,7 @@ private:
                             "};";
         const char expected[] = "class symbol_table { "
                                 "public: "
-                                "expression_error :: error_code * f ; "
+                                "expression_error :: error_code ( * f ) ( ) ; "
                                 "} ;";
         ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
         ASSERT_EQUALS("", errout.str());
@@ -2602,6 +2602,56 @@ private:
         }
     }
 
+    void simplifyTypedef130() { // #9446
+        const char code[] = "template <class, class> void a() {\n"
+                            "  typedef int(*b)[10];\n"
+                            "  a<b, b>();\n"
+                            "}";
+
+        const char exp [] = "template < class , class > void a ( ) { "
+                            "a < int ( * ) [ 10 ] , int ( * ) [ 10 ] > ( ) ; "
+                            "}";
+
+        ASSERT_EQUALS(exp, tok(code, false));
+    }
+
+    void simplifyTypedef131() {
+        const char code[] = "typedef unsigned char a4[4];\n"
+                            "a4 a4obj;\n"
+                            "a4 &&  a4_rref = std::move(a4obj);\n"
+                            "a4* a4p = &(a4obj);\n"
+                            "a4*&& a4p_rref = std::move(a4p);";
+
+        const char exp [] = "unsigned char a4obj [ 4 ] ; "
+                            "unsigned char ( && a4_rref ) [ 4 ] = std :: move ( a4obj ) ; "
+                            "unsigned char ( * a4p ) [ 4 ] ; "
+                            "a4p = & ( a4obj ) ; "
+                            "unsigned char ( * && a4p_rref ) [ 4 ] = std :: move ( a4p ) ;";
+
+        ASSERT_EQUALS(exp, tok(code, false));
+    }
+
+    void simplifyTypedef132() {
+        const char code[] = "namespace NamespaceA {\n"
+                            "    typedef int MySpecialType;\n"
+                            "}\n"
+                            "\n"
+                            "class A {\n"
+                            "    void DoSomething( NamespaceA::MySpecialType special );\n"
+                            "};\n"
+                            "\n"
+                            "using NamespaceA::MySpecialType;\n"
+                            "\n"
+                            "void A::DoSomething( MySpecialType wrongName ) {}";
+
+        const char exp [] = "class A { "
+                            "void DoSomething ( int special ) ; "
+                            "} ; "
+                            "void A :: DoSomething ( int wrongName ) { }";
+
+        ASSERT_EQUALS(exp, tok(code, false));
+    }
+
     void simplifyTypedefFunction1() {
         {
             const char code[] = "typedef void (*my_func)();\n"
@@ -2836,12 +2886,12 @@ private:
 
             // The expected result..
             const char expected[] = "C f1 ( ) ; "
-                                    "C * f2 ; " // this gets simplified to a regular pointer
+                                    "C ( * f2 ) ( ) ; "
                                     "C ( & f3 ) ( ) ; "
-                                    "C * f4 ; " // this gets simplified to a regular pointer
-                                    "C * f5 ; " // this gets simplified to a regular pointer
-                                    "C * f6 ; " // this gets simplified to a regular pointer
-                                    "C * f7 ;"; // this gets simplified to a regular pointer
+                                    "C ( * f4 ) ( ) ; "
+                                    "C ( * f5 ) ( ) ; "
+                                    "C ( * f6 ) ( ) ; "
+                                    "C ( * f7 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -2865,12 +2915,12 @@ private:
             // The expected result..
             // C const -> const C
             const char expected[] = "const C f1 ( ) ; "
-                                    "const C * f2 ; " // this gets simplified to a regular pointer
+                                    "const C ( * f2 ) ( ) ; "
                                     "const C ( & f3 ) ( ) ; "
-                                    "const C * f4 ; " // this gets simplified to a regular pointer
-                                    "const C * f5 ; " // this gets simplified to a regular pointer
-                                    "const C * f6 ; " // this gets simplified to a regular pointer
-                                    "const C * f7 ;"; // this gets simplified to a regular pointer
+                                    "const C ( * f4 ) ( ) ; "
+                                    "const C ( * f5 ) ( ) ; "
+                                    "const C ( * f6 ) ( ) ; "
+                                    "const C ( * f7 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -2893,12 +2943,12 @@ private:
 
             // The expected result..
             const char expected[] = "const C f1 ( ) ; "
-                                    "const C * f2 ; " // this gets simplified to a regular pointer
+                                    "const C ( * f2 ) ( ) ; "
                                     "const C ( & f3 ) ( ) ; "
-                                    "const C * f4 ; " // this gets simplified to a regular pointer
-                                    "const C * f5 ; " // this gets simplified to a regular pointer
-                                    "const C * f6 ; " // this gets simplified to a regular pointer
-                                    "const C * f7 ;"; // this gets simplified to a regular pointer
+                                    "const C ( * f4 ) ( ) ; "
+                                    "const C ( * f5 ) ( ) ; "
+                                    "const C ( * f6 ) ( ) ; "
+                                    "const C ( * f7 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -2921,12 +2971,12 @@ private:
 
             // The expected result..
             const char expected[] = "C * f1 ( ) ; "
-                                    "C * * f2 ; " // this gets simplified to a regular pointer
+                                    "C * ( * f2 ) ( ) ; "
                                     "C * ( & f3 ) ( ) ; "
-                                    "C * * f4 ; " // this gets simplified to a regular pointer
-                                    "C * * f5 ; " // this gets simplified to a regular pointer
-                                    "C * * f6 ; " // this gets simplified to a regular pointer
-                                    "C * * f7 ;"; // this gets simplified to a regular pointer
+                                    "C * ( * f4 ) ( ) ; "
+                                    "C * ( * f5 ) ( ) ; "
+                                    "C * ( * f6 ) ( ) ; "
+                                    "C * ( * f7 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -2949,12 +2999,12 @@ private:
 
             // The expected result..
             const char expected[] = "const C * f1 ( ) ; "
-                                    "const C * * f2 ; " // this gets simplified to a regular pointer
+                                    "const C * ( * f2 ) ( ) ; "
                                     "const C * ( & f3 ) ( ) ; "
-                                    "const C * * f4 ; " // this gets simplified to a regular pointer
-                                    "const C * * f5 ; " // this gets simplified to a regular pointer
-                                    "const C * * f6 ; " // this gets simplified to a regular pointer
-                                    "const C * * f7 ;"; // this gets simplified to a regular pointer
+                                    "const C * ( * f4 ) ( ) ; "
+                                    "const C * ( * f5 ) ( ) ; "
+                                    "const C * ( * f6 ) ( ) ; "
+                                    "const C * ( * f7 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -2978,12 +3028,12 @@ private:
             // The expected result..
             // C const -> const C
             const char expected[] = "const C * f1 ( ) ; "
-                                    "const C * * f2 ; " // this gets simplified to a regular pointer
+                                    "const C * ( * f2 ) ( ) ; "
                                     "const C * ( & f3 ) ( ) ; "
-                                    "const C * * f4 ; " // this gets simplified to a regular pointer
-                                    "const C * * f5 ; " // this gets simplified to a regular pointer
-                                    "const C * * f6 ; " // this gets simplified to a regular pointer
-                                    "const C * * f7 ;"; // this gets simplified to a regular pointer
+                                    "const C * ( * f4 ) ( ) ; "
+                                    "const C * ( * f5 ) ( ) ; "
+                                    "const C * ( * f6 ) ( ) ; "
+                                    "const C * ( * f7 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -3032,14 +3082,14 @@ private:
                             "type12 t12;";
 
         // The expected result..
-        const char expected[] = "int * t1 ; " // simplified to regular pointer
-                                "int * const t2 ; "
-                                "int * volatile t3 ; "
-                                "int * const volatile t4 ; "
-                                "int * t5 ; "
-                                "int * const t6 ; "
-                                "int * volatile t7 ; "
-                                "int * const volatile t8 ; "
+        const char expected[] = "int ( * t1 ) ( ) ; "
+                                "int ( * const t2 ) ( ) ; "
+                                "int ( * volatile t3 ) ( ) ; "
+                                "int ( * const volatile t4 ) ( ) ; "
+                                "int ( * t5 ) ( ) ; "
+                                "int ( * const t6 ) ( ) ; "
+                                "int ( * volatile t7 ) ( ) ; "
+                                "int ( * const volatile t8 ) ( ) ; "
                                 "int ( :: C :: * t9 ) ( float ) ; "
                                 "int ( :: C :: * const t10 ) ( float ) ; "
                                 "int ( :: C :: * volatile t11 ) ( float ) ; "
@@ -3125,10 +3175,10 @@ private:
                                 "func4 f4;";
 
             // The expected result..
-            const char expected[] = "B :: C * f1 ; "
-                                    "B :: C * f2 ; "
-                                    "B :: C * f3 ; "
-                                    "B :: C * f4 ;";
+            const char expected[] = "B :: C ( * f1 ) ( ) ; "
+                                    "B :: C ( * f2 ) ( ) ; "
+                                    "B :: C ( * f3 ) ( ) ; "
+                                    "B :: C ( * f4 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -3163,10 +3213,10 @@ private:
                                 "func4 f4;";
 
             // The expected result..
-            const char expected[] = "A :: B :: C * f1 ; "
-                                    "A :: B :: C * f2 ; "
-                                    "A :: B :: C * f3 ; "
-                                    "A :: B :: C * f4 ;";
+            const char expected[] = "A :: B :: C ( * f1 ) ( ) ; "
+                                    "A :: B :: C ( * f2 ) ( ) ; "
+                                    "A :: B :: C ( * f3 ) ( ) ; "
+                                    "A :: B :: C ( * f4 ) ( ) ;";
             ASSERT_EQUALS(expected, tok(code, true, Settings::Native, false));
             ASSERT_EQUALS("", errout.str());
         }
@@ -3185,8 +3235,8 @@ private:
                       "namespace MySpace { "
                       "enum Format_E2 { FORMAT21 , FORMAT22 } ; enum Format_E2 Format_T2 ; "
                       "} "
-                      "Format_E1 * * t1 ; "
-                      "MySpace :: Format_E2 * * t2 ;",
+                      "Format_E1 ( * * t1 ) ( ) ; "
+                      "MySpace :: Format_E2 ( * * t2 ) ( ) ;",
                       tok(code,false));
     }
 

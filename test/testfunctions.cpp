@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -432,8 +432,16 @@ private:
               "}");
         ASSERT_EQUALS("[test.cpp:2]: (error) Invalid memset() argument nr 3. A non-boolean value is required.\n", errout.str());
 
-        check("int f() { strtol(a,b,sizeof(a)!=12); }");
-        ASSERT_EQUALS("[test.cpp:1]: (error) Invalid strtol() argument nr 3. The value is 0 or 1 (boolean) but the valid values are '0,2:36'.\n", errout.str());
+        check("void boolArgZeroIsInvalidButOneIsValid(int param) {\n"
+              "  void* buffer = calloc(param > 0, 10);\n"
+              "  free(buffer);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Invalid calloc() argument nr 1. The value is 0 or 1 (boolean) but the valid values are '1:'.\n", errout.str());
+
+        check("void boolArgZeroIsValidButOneIsInvalid(int param) {\n"
+              "  strtol(a, b, param > 0);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Invalid strtol() argument nr 3. The value is 0 or 1 (boolean) but the valid values are '0,2:36'.\n", errout.str());
 
         check("int f() { strtol(a,b,1); }");
         ASSERT_EQUALS("[test.cpp:1]: (error) Invalid strtol() argument nr 3. The value is 1 but the valid values are '0,2:36'.\n", errout.str());
@@ -596,7 +604,16 @@ private:
               "    std::cout <<  log1pf(-3) << std::endl;\n"
               "    std::cout <<  log1pl(-3) << std::endl;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (warning) Passing value -2 to log() leads to implementation-defined result.\n"
+        ASSERT_EQUALS("[test.cpp:3]: (error) Invalid log() argument nr 1. The value is -2 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:4]: (error) Invalid logf() argument nr 1. The value is -2 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:5]: (error) Invalid logl() argument nr 1. The value is -2 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:6]: (error) Invalid log10() argument nr 1. The value is -2 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:7]: (error) Invalid log10f() argument nr 1. The value is -2 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:8]: (error) Invalid log10l() argument nr 1. The value is -2 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:9]: (error) Invalid log2() argument nr 1. The value is -2 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:10]: (error) Invalid log2f() argument nr 1. The value is -2 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:11]: (error) Invalid log2l() argument nr 1. The value is -2 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:3]: (warning) Passing value -2 to log() leads to implementation-defined result.\n"
                       "[test.cpp:4]: (warning) Passing value -2 to logf() leads to implementation-defined result.\n"
                       "[test.cpp:5]: (warning) Passing value -2 to logl() leads to implementation-defined result.\n"
                       "[test.cpp:6]: (warning) Passing value -2 to log10() leads to implementation-defined result.\n"
@@ -624,7 +641,16 @@ private:
               "    std::cout <<  log1pf(-2) << std::endl;\n"
               "    std::cout <<  log1pl(-2) << std::endl;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (warning) Passing value -1 to log() leads to implementation-defined result.\n"
+        ASSERT_EQUALS("[test.cpp:3]: (error) Invalid log() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:4]: (error) Invalid logf() argument nr 1. The value is -1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:5]: (error) Invalid logl() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:6]: (error) Invalid log10() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:7]: (error) Invalid log10f() argument nr 1. The value is -1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:8]: (error) Invalid log10l() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:9]: (error) Invalid log2() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:10]: (error) Invalid log2f() argument nr 1. The value is -1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:11]: (error) Invalid log2l() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:3]: (warning) Passing value -1 to log() leads to implementation-defined result.\n"
                       "[test.cpp:4]: (warning) Passing value -1 to logf() leads to implementation-defined result.\n"
                       "[test.cpp:5]: (warning) Passing value -1 to logl() leads to implementation-defined result.\n"
                       "[test.cpp:6]: (warning) Passing value -1 to log10() leads to implementation-defined result.\n"
@@ -652,7 +678,16 @@ private:
               "    std::cout <<  log1pf(-2.0) << std::endl;\n"
               "    std::cout <<  log1pl(-2.0) << std::endl;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (warning) Passing value -1.0 to log() leads to implementation-defined result.\n"
+        ASSERT_EQUALS("[test.cpp:3]: (error) Invalid log() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:4]: (error) Invalid logf() argument nr 1. The value is -1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:5]: (error) Invalid logl() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:6]: (error) Invalid log10() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:7]: (error) Invalid log10f() argument nr 1. The value is -1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:8]: (error) Invalid log10l() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:9]: (error) Invalid log2() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:10]: (error) Invalid log2f() argument nr 1. The value is -1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:11]: (error) Invalid log2l() argument nr 1. The value is -1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:3]: (warning) Passing value -1.0 to log() leads to implementation-defined result.\n"
                       "[test.cpp:4]: (warning) Passing value -1.0 to logf() leads to implementation-defined result.\n"
                       "[test.cpp:5]: (warning) Passing value -1.0 to logl() leads to implementation-defined result.\n"
                       "[test.cpp:6]: (warning) Passing value -1.0 to log10() leads to implementation-defined result.\n"
@@ -680,7 +715,16 @@ private:
               "    std::cout <<  log1pf(-1.1) << std::endl;\n"
               "    std::cout <<  log1pl(-1.1) << std::endl;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (warning) Passing value -0.1 to log() leads to implementation-defined result.\n"
+        ASSERT_EQUALS("[test.cpp:3]: (error) Invalid log() argument nr 1. The value is -0.1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:4]: (error) Invalid logf() argument nr 1. The value is -0.1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:5]: (error) Invalid logl() argument nr 1. The value is -0.1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:6]: (error) Invalid log10() argument nr 1. The value is -0.1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:7]: (error) Invalid log10f() argument nr 1. The value is -0.1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:8]: (error) Invalid log10l() argument nr 1. The value is -0.1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:9]: (error) Invalid log2() argument nr 1. The value is -0.1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:10]: (error) Invalid log2f() argument nr 1. The value is -0.1 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:11]: (error) Invalid log2l() argument nr 1. The value is -0.1 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:3]: (warning) Passing value -0.1 to log() leads to implementation-defined result.\n"
                       "[test.cpp:4]: (warning) Passing value -0.1 to logf() leads to implementation-defined result.\n"
                       "[test.cpp:5]: (warning) Passing value -0.1 to logl() leads to implementation-defined result.\n"
                       "[test.cpp:6]: (warning) Passing value -0.1 to log10() leads to implementation-defined result.\n"
@@ -708,7 +752,16 @@ private:
               "    std::cout <<  log1pf(-1.0) << std::endl;\n"
               "    std::cout <<  log1pl(-1) << std::endl;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (warning) Passing value 0 to log() leads to implementation-defined result.\n"
+        ASSERT_EQUALS("[test.cpp:3]: (error) Invalid log() argument nr 1. The value is 0 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:4]: (error) Invalid logf() argument nr 1. The value is 0 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:5]: (error) Invalid logl() argument nr 1. The value is 0 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:6]: (error) Invalid log10() argument nr 1. The value is 0 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:7]: (error) Invalid log10f() argument nr 1. The value is 0 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:8]: (error) Invalid log10l() argument nr 1. The value is 0 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:9]: (error) Invalid log2() argument nr 1. The value is 0 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:10]: (error) Invalid log2f() argument nr 1. The value is 0 but the valid values are '1.4013e-45:'.\n"
+                      "[test.cpp:11]: (error) Invalid log2l() argument nr 1. The value is 0 but the valid values are '4.94066e-324:'.\n"
+                      "[test.cpp:3]: (warning) Passing value 0 to log() leads to implementation-defined result.\n"
                       "[test.cpp:4]: (warning) Passing value 0. to logf() leads to implementation-defined result.\n"
                       "[test.cpp:5]: (warning) Passing value 0.0 to logl() leads to implementation-defined result.\n"
                       "[test.cpp:6]: (warning) Passing value 0.0 to log10() leads to implementation-defined result.\n"
@@ -1142,12 +1195,6 @@ private:
         // #7905
         check("void foo() {\n"
               "   int x({mystrcmp(a,b)});\n"
-              "}", "test.cpp", &settings2);
-        ASSERT_EQUALS("", errout.str());
-
-        // #7979 - code is not well configured
-        check("void foo() {\n"
-              "  DEBUG(x(); mystrcmp(a,b););\n"
               "}", "test.cpp", &settings2);
         ASSERT_EQUALS("", errout.str());
 

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2018 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -69,7 +69,7 @@ void ThreadHandler::setCheckFiles(bool all)
     }
 }
 
-void ThreadHandler::setCheckFiles(QStringList files)
+void ThreadHandler::setCheckFiles(const QStringList& files)
 {
     if (mRunningThreadCount == 0) {
         mResults.setFiles(files);
@@ -94,7 +94,6 @@ void ThreadHandler::check(const Settings &settings)
 
     for (int i = 0; i < mRunningThreadCount; i++) {
         mThreads[i]->setAddonsAndTools(mAddonsAndTools);
-        mThreads[i]->setMisraFile(mMisraFile);
         mThreads[i]->setSuppressions(mSuppressions);
         mThreads[i]->setClangIncludePaths(mClangIncludePaths);
         mThreads[i]->setDataDir(mDataDir);
@@ -194,6 +193,9 @@ void ThreadHandler::initialize(ResultsView *view)
 
     connect(&mResults, &ThreadResult::debugError,
             this, &ThreadHandler::debugError);
+
+    connect(&mResults, &ThreadResult::bughuntingReportLine,
+            this, &ThreadHandler::bughuntingReportLine);
 }
 
 void ThreadHandler::loadSettings(QSettings &settings)
@@ -284,5 +286,5 @@ QDateTime ThreadHandler::getCheckStartTime() const
 
 void ThreadHandler::setCheckStartTime(QDateTime checkStartTime)
 {
-    mCheckStartTime = checkStartTime;
+    mCheckStartTime = std::move(checkStartTime);
 }

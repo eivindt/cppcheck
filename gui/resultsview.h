@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,9 +50,7 @@ public:
     virtual ~ResultsView();
     ResultsView &operator=(const ResultsView &) = delete;
 
-    void setTags(const QStringList &tags) {
-        mUI.mTree->setTags(tags);
-    }
+    void setAddedContracts(const QStringList &addedContracts);
 
     /**
      * @brief Clear results and statistics and reset progressinfo.
@@ -131,7 +129,7 @@ public:
     * @return Directory containing source files
     */
 
-    QString getCheckDirectory(void);
+    QString getCheckDirectory();
 
     /**
     * @brief Inform the view that checking has started
@@ -220,13 +218,11 @@ signals:
     */
     void checkSelected(QStringList selectedFilesList);
 
-    /**
-     * Some results have been tagged
-     */
-    void tagged();
-
     /** Suppress Ids */
     void suppressIds(QStringList ids);
+
+    /** Edit contract for function */
+    void editFunctionContract(QString function);
 
     /**
     * @brief Show/hide certain type of errors
@@ -324,6 +320,11 @@ public slots:
     void debugError(const ErrorItem &item);
 
     /**
+     * \brief bughunting report line
+     */
+    void bughuntingReportLine(const QString& line);
+
+    /**
      * \brief Clear log messages
      */
     void logClear();
@@ -337,6 +338,9 @@ public slots:
      * \brief Copy all log messages
      */
     void logCopyComplete();
+
+    /** \brief Contract was double clicked => edit it */
+    void contractDoubleClicked(QListWidgetItem* item);
 
 protected:
     /**
@@ -353,6 +357,11 @@ private slots:
      * @param pos Mouse click position
      */
     void on_mListLog_customContextMenuRequested(const QPoint &pos);
+private:
+    QSet<QString> mContracts;
+
+    /** Current file shown in the code editor */
+    QString mCurrentFileName;
 };
 /// @}
 #endif // RESULTSVIEW_H

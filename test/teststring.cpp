@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -89,6 +89,12 @@ private:
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (error) Modifying string literal \"abc\" directly or indirectly is undefined behaviour.\n", errout.str());
 
         check("void f() {\n"
+              "  char *abc = \"A very long string literal\";\n"
+              "  abc[0] = 'a';\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (error) Modifying string literal \"A very long stri..\" directly or indirectly is undefined behaviour.\n", errout.str());
+
+        check("void f() {\n"
               "  QString abc = \"abc\";\n"
               "  abc[0] = 'a';\n"
               "}");
@@ -118,13 +124,13 @@ private:
               "  wchar_t *abc = L\"abc\";\n"
               "  abc[0] = u'a';\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (error) Modifying string literal \"abc\" directly or indirectly is undefined behaviour.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (error) Modifying string literal L\"abc\" directly or indirectly is undefined behaviour.\n", errout.str());
 
         check("void f() {\n"
               "  char16_t *abc = u\"abc\";\n"
               "  abc[0] = 'a';\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (error) Modifying string literal \"abc\" directly or indirectly is undefined behaviour.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (error) Modifying string literal u\"abc\" directly or indirectly is undefined behaviour.\n", errout.str());
     }
 
     void alwaysTrueFalseStringCompare() {
@@ -387,6 +393,13 @@ private:
               "   if (example.buffer == \"test\") ;\n"
               "}\n", "test.c");
         ASSERT_EQUALS("[test.c:6]: (warning) String literal compared with variable 'example.buffer'. Did you intend to use strcmp() instead?\n", errout.str());
+
+        // #9726
+        check("void f(std::vector<std::string> theArgs) {\n"
+              "   std::string arg1(*theArgs.begin());\n"
+              "   if(arg1 == \"aaa\") {}\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void suspiciousStringCompare_char() {
@@ -603,7 +616,7 @@ private:
         check("int f() {\n"
               "    return test.substr( 0 , 4 ) == L\"Hello\" ? 0 : 1 ;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:2]: (warning) String literal \"Hello\" doesn't match length argument for substr().\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:2]: (warning) String literal L\"Hello\" doesn't match length argument for substr().\n", errout.str());
 
         check("int f() {\n"
               "    return test.substr( 0 , 5 ) == \"Hello\" ? 0 : 1 ;\n"
@@ -688,7 +701,7 @@ private:
               "  int x = 'd' ? 1 : 2;\n"
               "}");
         ASSERT_EQUALS("[test.cpp:2]: (warning) Conversion of char literal 'a' to bool always evaluates to true.\n"
-                      "[test.cpp:3]: (warning) Conversion of char literal 'b' to bool always evaluates to true.\n"
+                      "[test.cpp:3]: (warning) Conversion of char literal L'b' to bool always evaluates to true.\n"
                       "[test.cpp:4]: (warning) Conversion of char literal 'c' to bool always evaluates to true.\n"
                       "[test.cpp:5]: (warning) Conversion of char literal 'd' to bool always evaluates to true.\n"
                       , errout.str());
@@ -704,7 +717,7 @@ private:
               "  if(L'\\0' || cond){}\n"
               "}");
         ASSERT_EQUALS("[test.cpp:2]: (warning) Conversion of char literal '\\0' to bool always evaluates to false.\n"
-                      "[test.cpp:3]: (warning) Conversion of char literal '\\0' to bool always evaluates to false.\n", errout.str());
+                      "[test.cpp:3]: (warning) Conversion of char literal L'\\0' to bool always evaluates to false.\n", errout.str());
     }
 
     void deadStrcmp() {

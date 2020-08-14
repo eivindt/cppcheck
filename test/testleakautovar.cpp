@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -76,6 +76,7 @@ private:
         TEST_CASE(assign17); // #9047
         TEST_CASE(assign18);
         TEST_CASE(assign19);
+        TEST_CASE(assign20); // #9187
 
         TEST_CASE(isAutoDealloc);
 
@@ -133,6 +134,7 @@ private:
         TEST_CASE(ifelse13); // #8392
         TEST_CASE(ifelse14); // #9130 - if (x == (char*)NULL)
         TEST_CASE(ifelse15); // #9206 - if (global_ptr = malloc(1))
+        TEST_CASE(ifelse16); // #9635 - if (p = malloc(4), p == NULL)
 
         // switch
         TEST_CASE(switch1);
@@ -183,6 +185,8 @@ private:
         TEST_CASE(smartPtrInContainer); // #8262
 
         TEST_CASE(recursiveCountLimit); // #5872 #6157 #9097
+
+        TEST_CASE(functionCallCastConfig); // #9652
     }
 
     void check(const char code[], bool cpp = false) {
@@ -193,6 +197,22 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, cpp?"test.cpp":"test.c");
+
+        // Check for leaks..
+        CheckLeakAutoVar c;
+        settings.checkLibrary = true;
+        settings.addEnabled("information");
+        c.runChecks(&tokenizer, &settings, this);
+    }
+
+    void check(const char code[], Settings & settings) {
+        // Clear the error buffer..
+        errout.str("");
+
+        // Tokenize..
+        Tokenizer tokenizer(&settings, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
 
         // Check for leaks..
         CheckLeakAutoVar c;
@@ -217,7 +237,7 @@ private:
 
         // Tokenizer..
         Tokenizer tokenizer(&settings, this);
-        tokenizer.createTokens(&tokens2);
+        tokenizer.createTokens(std::move(tokens2));
         tokenizer.simplifyTokens1("");
 
         // Check for leaks..
@@ -413,6 +433,13 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void assign20() { // #9187
+        check("void f() {\n"
+              "    char *p = static_cast<int>(malloc(10));\n"
+              "}", true);
+        ASSERT_EQUALS("[test.cpp:3]: (error) Memory leak: p\n", errout.str());
+    }
+
     void isAutoDealloc() {
         check("void f() {\n"
               "    char *p = new char[100];"
@@ -428,6 +455,15 @@ private:
               "    std::string *str = new std::string;"
               "}", true);
         TODO_ASSERT_EQUALS("[test.cpp:2]: (error) Memory leak: str\n", "", errout.str());
+
+        check("class TestType {\n" // #9028
+              "public:\n"
+              "    char ca[12];\n"
+              "};\n"
+              "void f() {\n"
+              "    TestType *tt = new TestType();\n"
+              "}", true);
+        ASSERT_EQUALS("[test.cpp:7]: (error) Memory leak: tt\n", errout.str());
     }
 
     void realloc1() {
@@ -1449,6 +1485,26 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void ifelse16() { // #9635
+        check("void f(void) {\n"
+              "    char *p;\n"
+              "    if(p = malloc(4), p == NULL)\n"
+              "        return;\n"
+              "    free(p);\n"
+              "    return;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f(void) {\n"
+              "    char *p, q;\n"
+              "    if(p = malloc(4), q = 1, p == NULL)\n"
+              "        return;\n"
+              "    free(p);\n"
+              "    return;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void switch1() {
         check("void f() {\n"
               "    char *p = 0;\n"
@@ -2006,12 +2062,85 @@ private:
                                "}"));
     }
 
+    void functionCallCastConfig() { // #9652
+        Settings settingsFunctionCall = settings;
+
+        const char xmldata[] = "<?xml version=\"1.0\"?>\n"
+                               "<def format=\"2\">\n"
+                               "  <function name=\"free_func\">\n"
+                               "    <noreturn>false</noreturn>\n"
+                               "    <arg nr=\"1\">\n"
+                               "      <not-uninit/>\n"
+                               "    </arg>\n"
+                               "    <arg nr=\"2\">\n"
+                               "      <not-uninit/>\n"
+                               "    </arg>\n"
+                               "  </function>\n"
+                               "</def>";
+        tinyxml2::XMLDocument doc;
+        doc.Parse(xmldata, sizeof(xmldata));
+        settingsFunctionCall.library.load(doc);
+        check("void test_func()\n"
+              "{\n"
+              "    char * buf = malloc(4);\n"
+              "    free_func((void *)(1), buf);\n"
+              "}", settingsFunctionCall);
+        ASSERT_EQUALS("[test.cpp:5]: (information) --check-library: Function free_func() should have <use>/<leak-ignore> configuration\n", errout.str());
+    }
 };
 
 REGISTER_TEST(TestLeakAutoVar)
 
 
+class TestLeakAutoVarStrcpy: public TestFixture {
+public:
+    TestLeakAutoVarStrcpy() : TestFixture("TestLeakAutoVarStrcpy") {
+    }
 
+private:
+    Settings settings;
+
+    void check(const char code[]) {
+        // Clear the error buffer..
+        errout.str("");
+
+        // Tokenize..
+        Tokenizer tokenizer(&settings, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
+
+        // Check for leaks..
+        CheckLeakAutoVar checkLeak;
+        settings.checkLibrary = true;
+        settings.addEnabled("information");
+        checkLeak.runChecks(&tokenizer, &settings, this);
+    }
+
+    void run() OVERRIDE {
+        LOAD_LIB_2(settings.library, "std.cfg");
+
+        TEST_CASE(returnedValue); // #9298
+        TEST_CASE(fclose_false_positive); // #9575
+    }
+
+    void returnedValue() { // #9298
+        check("char *m;\n"
+              "void strcpy_returnedvalue(const char* str)\n"
+              "{\n"
+              "    char* ptr = new char[strlen(str)+1];\n"
+              "    m = strcpy(ptr, str);\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void fclose_false_positive() { // #9575
+        check("int  f(FILE *fp) { return fclose(fp); }");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+};
+
+REGISTER_TEST(TestLeakAutoVarStrcpy)
 
 
 class TestLeakAutoVarWindows : public TestFixture {

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 #include "checkunusedvar.h"
 
 #include "astutils.h"
-#include "errorlogger.h"
+#include "preprocessor.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
@@ -594,6 +594,11 @@ static bool isPartOfClassStructUnion(const Token* tok)
     return false;
 }
 
+static bool isVarDecl(const Token *tok)
+{
+    return tok && tok->variable() && tok->variable()->nameToken() == tok;
+}
+
 // Skip [ .. ]
 static const Token * skipBrackets(const Token *tok)
 {
@@ -1047,11 +1052,11 @@ void CheckUnusedVar::checkFunctionVariableUsage_iterateScopes(const Scope* const
                 variables.use(tok->astOperand2()->varId(), tok->astOperand2());
         }
 
-        else if (tok->isExtendedOp() && tok->next() && tok->next()->varId() && tok->strAt(2) != "=") {
+        else if (tok->isExtendedOp() && tok->next() && tok->next()->varId() && tok->strAt(2) != "=" && !isVarDecl(tok->next())) {
             variables.readAll(tok->next()->varId(), tok);
         }
 
-        else if (tok->varId() && tok->next() && (tok->next()->str() == ")" || tok->next()->isExtendedOp())) {
+        else if (tok->varId() && !isVarDecl(tok) && tok->next() && (tok->next()->str() == ")" || tok->next()->isExtendedOp())) {
             if (Token::Match(tok->tokAt(-2), "%name% ( %var% [,)]") &&
                 !(tok->tokAt(-2)->variable() && tok->tokAt(-2)->variable()->isReference()))
                 variables.use(tok->varId(), tok);
@@ -1089,6 +1094,9 @@ void CheckUnusedVar::checkFunctionVariableUsage_iterateScopes(const Scope* const
 void CheckUnusedVar::checkFunctionVariableUsage()
 {
     if (!mSettings->isEnabled(Settings::STYLE))
+        return;
+
+    if (mSettings->clang)
         return;
 
     // Parse all executing scopes..
@@ -1152,7 +1160,7 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                     case ValueType::Type::LONGDOUBLE:
                         check = true;
                         break;
-                    };
+                    }
                     if (!check)
                         continue;
                 }
@@ -1168,7 +1176,7 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                     continue;
             }
             // Do not warn about assignment with NULL
-            if (FwdAnalysis::isNullOperand(tok->astOperand2()))
+            if (isNullOperand(tok->astOperand2()))
                 continue;
 
             if (!tok->astOperand1())
@@ -1180,27 +1188,67 @@ void CheckUnusedVar::checkFunctionVariableUsage()
             if (iteratorToken && iteratorToken->variable() && iteratorToken->variable()->typeEndToken()->str().find("iterator") != std::string::npos)
                 continue;
 
-            const Variable *op1Var = tok->astOperand1() ? tok->astOperand1()->variable() : nullptr;
-            if (op1Var && op1Var->isReference() && op1Var->nameToken() != tok->astOperand1())
-                // todo: check references
-                continue;
+            const Token *op1tok = tok->astOperand1();
+            while (Token::Match(op1tok, ".|[|*"))
+                op1tok = op1tok->astOperand1();
 
-            if (op1Var && op1Var->isStatic())
-                // todo: check static variables
-                continue;
+            const Variable *op1Var = op1tok ? op1tok->variable() : nullptr;
+            std::string bailoutTypeName;
+            if (op1Var) {
+                if (op1Var->isReference() && op1Var->nameToken() != tok->astOperand1())
+                    // todo: check references
+                    continue;
 
-            if (op1Var && op1Var->nameToken()->isAttributeUnused())
-                continue;
+                if (op1Var->isStatic())
+                    // todo: check static variables
+                    continue;
+
+                if (op1Var->nameToken()->isAttributeUnused())
+                    continue;
+
+                // Bailout for unknown template classes, we have no idea what side effects such assignments have
+                if (mTokenizer->isCPP() &&
+                    op1Var->isClass() &&
+                    (!op1Var->valueType() || op1Var->valueType()->type == ValueType::Type::UNKNOWN_TYPE)) {
+                    // Check in the library if we should bailout or not..
+                    const std::string typeName = op1Var->getTypeName();
+                    switch (mSettings->library.getTypeCheck("unusedvar", typeName)) {
+                    case Library::TypeCheck::def:
+                        bailoutTypeName = typeName;
+                        break;
+                    case Library::TypeCheck::check:
+                        break;
+                    case Library::TypeCheck::suppress:
+                        continue;
+                    }
+                }
+            }
 
             // Is there a redundant assignment?
             const Token *start = tok->findExpressionStartEndTokens().second->next();
 
             const Token *expr = varDecl ? varDecl : tok->astOperand1();
 
+            // Is variable in lhs a union member?
+            if (tok->previous() && tok->previous()->variable() && tok->previous()->variable()->nameToken()->scope()->type == Scope::eUnion)
+                continue;
+
             FwdAnalysis fwdAnalysis(mTokenizer->isCPP(), mSettings->library);
-            if (fwdAnalysis.unusedValue(expr, start, scope->bodyEnd))
+            if (fwdAnalysis.unusedValue(expr, start, scope->bodyEnd)) {
+                if (!bailoutTypeName.empty() && bailoutTypeName != "auto") {
+                    if (mSettings->checkLibrary && mSettings->isEnabled(Settings::INFORMATION)) {
+                        reportError(tok,
+                                    Severity::information,
+                                    "checkLibraryCheckType",
+                                    "--check-library: Provide <type-checks><unusedvar> configuration for " + bailoutTypeName);
+                        continue;
+                    }
+                }
+
                 // warn
-                unreadVariableError(tok, expr->expressionString(), false);
+                if (!expr->variable() || !expr->variable()->isMaybeUnused())
+                    unreadVariableError(tok, expr->expressionString(), false);
+            }
         }
 
         // varId, usage {read, write, modified}
@@ -1234,9 +1282,11 @@ void CheckUnusedVar::checkFunctionVariableUsage()
                 allocatedButUnusedVariableError(usage._lastAccess, varname);
 
             // variable has not been written, read, or modified
-            else if (usage.unused() && !usage._modified)
-                unusedVariableError(usage._var->nameToken(), varname);
-
+            else if (usage.unused() && !usage._modified) {
+                if (!usage._var->isMaybeUnused()) {
+                    unusedVariableError(usage._var->nameToken(), varname);
+                }
+            }
             // variable has not been written but has been modified
             else if (usage._modified && !usage._write && !usage._allocateMemory && var && !var->isStlType())
                 unassignedVariableError(usage._var->nameToken(), varname);
@@ -1291,6 +1341,17 @@ void CheckUnusedVar::checkStructMemberUsage()
         // Packed struct => possibly used by lowlevel code. Struct members might be required by hardware.
         if (scope.bodyEnd->isAttributePacked())
             continue;
+        if (const Preprocessor *preprocessor = mTokenizer->getPreprocessor()) {
+            bool isPacked = false;
+            for (const Directive &d: preprocessor->getDirectives()) {
+                if (d.str == "#pragma pack(1)" && d.file == mTokenizer->list.getFiles().front() && d.linenr < scope.bodyStart->linenr()) {
+                    isPacked=true;
+                    break;
+                }
+            }
+            if (isPacked)
+                continue;
+        }
 
         // Bail out if struct/union contains any functions
         if (!scope.functionList.empty())
@@ -1356,7 +1417,11 @@ void CheckUnusedVar::checkStructMemberUsage()
                 continue;
 
             // Check if the struct member variable is used anywhere in the file
-            if (Token::findsimplematch(mTokenizer->tokens(), (". " + var.name()).c_str()))
+            std::string tmp(". " + var.name());
+            if (Token::findsimplematch(mTokenizer->tokens(), tmp.c_str(), tmp.size()))
+                continue;
+            tmp = (":: " + var.name());
+            if (Token::findsimplematch(mTokenizer->tokens(), tmp.c_str(), tmp.size()))
                 continue;
 
             unusedStructMemberError(var.nameToken(), scope.className, var.name(), scope.type == Scope::eUnion);
@@ -1377,24 +1442,50 @@ bool CheckUnusedVar::isRecordTypeWithoutSideEffects(const Type* type)
 
     const std::pair<std::map<const Type *,bool>::iterator,bool> found=mIsRecordTypeWithoutSideEffectsMap.insert(
                 std::pair<const Type *,bool>(type,false)); //Initialize with side effects for possible recursions
-    bool & withoutSideEffects=found.first->second;
+    bool & withoutSideEffects = found.first->second;
     if (!found.second)
         return withoutSideEffects;
 
-    if (type && type->classScope && type->classScope->numConstructors == 0 &&
-        (type->classScope->varlist.empty() || type->needInitialization == Type::NeedInitialization::True)) {
-        for (std::vector<Type::BaseInfo>::const_iterator i = type->derivedFrom.begin(); i != type->derivedFrom.end(); ++i) {
-            if (!isRecordTypeWithoutSideEffects(i->type)) {
-                withoutSideEffects=false;
-                return withoutSideEffects;
-            }
-        }
-        withoutSideEffects=true;
-        return withoutSideEffects;
+    // unknown types are assumed to have side effects
+    if (!type || !type->classScope)
+        return (withoutSideEffects = false);
+
+    // Non-empty constructors => possible side effects
+    for (const Function& f : type->classScope->functionList) {
+        if (!f.isConstructor())
+            continue;
+        if (f.argDef && Token::simpleMatch(f.argDef->link(), ") ="))
+            continue; // ignore default/deleted constructors
+        const bool emptyBody = (f.functionScope && Token::simpleMatch(f.functionScope->bodyStart, "{ }"));
+        const bool hasInitList = f.argDef && Token::simpleMatch(f.argDef->link(), ") :");
+        if (!emptyBody || hasInitList)
+            return (withoutSideEffects = false);
     }
 
-    withoutSideEffects=false;   // unknown types are assumed to have side effects
-    return withoutSideEffects;
+    // Derived from type that has side effects?
+    for (const Type::BaseInfo& derivedFrom : type->derivedFrom) {
+        if (!isRecordTypeWithoutSideEffects(derivedFrom.type))
+            return (withoutSideEffects = false);
+    }
+
+    // Is there a member variable with possible side effects
+    for (const Variable& var : type->classScope->varlist) {
+        if (var.isPointer())
+            continue;
+
+        const Type* variableType = var.type();
+        if (variableType) {
+            if (!isRecordTypeWithoutSideEffects(variableType))
+                return (withoutSideEffects = false);
+        } else {
+            ValueType::Type valueType = var.valueType()->type;
+            if ((valueType == ValueType::Type::UNKNOWN_TYPE) || (valueType == ValueType::Type::NONSTD))
+                return (withoutSideEffects = false);
+        }
+    }
+
+
+    return (withoutSideEffects = true);
 }
 
 bool CheckUnusedVar::isEmptyType(const Type* type)

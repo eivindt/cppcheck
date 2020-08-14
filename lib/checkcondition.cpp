@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,7 +23,6 @@
 #include "checkcondition.h"
 
 #include "astutils.h"
-#include "errorlogger.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
@@ -453,7 +452,13 @@ void CheckCondition::duplicateCondition()
             continue;
 
         bool modified = false;
-        visitAstNodes(cond1, [&](const Token *tok3) {
+        visitAstNodes(cond1, [&](const Token* tok3) {
+            if (exprDependsOnThis(tok3)) {
+                if (isThisChanged(scope.classDef->next(), cond2, false, mSettings, mTokenizer->isCPP())) {
+                    modified = true;
+                    return ChildrenToVisit::done;
+                }
+            }
             if (tok3->varId() > 0 &&
                 isVariableChanged(scope.classDef->next(), cond2, tok3->varId(), false, mSettings, mTokenizer->isCPP())) {
                 modified = true;
@@ -627,6 +632,17 @@ void CheckCondition::multiCondition2()
         if (nonConstFunctionCall)
             continue;
 
+        std::vector<const Variable*> varsInCond;
+        visitAstNodes(condTok,
+        [&varsInCond](const Token *cond) {
+            if (cond->variable()) {
+                const Variable *var = cond->variable();
+                if (std::find(varsInCond.begin(), varsInCond.end(), var) == varsInCond.end())
+                    varsInCond.push_back(var);
+            }
+            return ChildrenToVisit::op1_and_op2;
+        });
+
         // parse until second condition is reached..
         enum MULTICONDITIONTYPE { INNER, AFTER };
         const Token *tok;
@@ -672,16 +688,11 @@ void CheckCondition::multiCondition2()
                     ErrorPath errorPath;
 
                     if (type == MULTICONDITIONTYPE::INNER) {
-                        std::stack<const Token *> tokens1;
-                        tokens1.push(cond1);
-                        while (!tokens1.empty()) {
-                            const Token *firstCondition = tokens1.top();
-                            tokens1.pop();
+                        visitAstNodes(cond1, [&](const Token* firstCondition) {
                             if (!firstCondition)
-                                continue;
+                                return ChildrenToVisit::none;
                             if (firstCondition->str() == "&&") {
-                                tokens1.push(firstCondition->astOperand1());
-                                tokens1.push(firstCondition->astOperand2());
+                                return ChildrenToVisit::op1_and_op2;
                             } else if (!firstCondition->hasKnownIntValue()) {
                                 if (!isReturnVar && isOppositeCond(false, mTokenizer->isCPP(), firstCondition, cond2, mSettings->library, true, true, &errorPath)) {
                                     if (!isAliased(vars))
@@ -690,25 +701,26 @@ void CheckCondition::multiCondition2()
                                     identicalInnerConditionError(firstCondition, cond2, errorPath);
                                 }
                             }
-                        }
+                            return ChildrenToVisit::none;
+                        });
                     } else {
-                        std::stack<const Token *> tokens2;
-                        tokens2.push(cond2);
-                        while (!tokens2.empty()) {
-                            const Token *secondCondition = tokens2.top();
-                            tokens2.pop();
-                            if (!secondCondition)
-                                continue;
-                            if (secondCondition->str() == "||" || secondCondition->str() == "&&") {
-                                tokens2.push(secondCondition->astOperand1());
-                                tokens2.push(secondCondition->astOperand2());
-                            } else if ((!cond1->hasKnownIntValue() || !secondCondition->hasKnownIntValue()) &&
-                                       isSameExpression(mTokenizer->isCPP(), true, cond1, secondCondition, mSettings->library, true, true, &errorPath)) {
-                                if (!isAliased(vars))
+                        visitAstNodes(cond2, [&](const Token *secondCondition) {
+                            if (secondCondition->str() == "||" || secondCondition->str() == "&&")
+                                return ChildrenToVisit::op1_and_op2;
+
+                            if ((!cond1->hasKnownIntValue() || !secondCondition->hasKnownIntValue()) &&
+                                isSameExpression(mTokenizer->isCPP(), true, cond1, secondCondition, mSettings->library, true, true, &errorPath)) {
+                                if (!isAliased(vars) && !mTokenizer->hasIfdef(cond1, secondCondition)) {
                                     identicalConditionAfterEarlyExitError(cond1, secondCondition, errorPath);
+                                    return ChildrenToVisit::done;
+                                }
                             }
-                        }
+                            return ChildrenToVisit::none;
+                        });
                     }
+                }
+                if (Token::Match(tok, "%name% (") && isVariablesChanged(tok, tok->linkAt(1), true, varsInCond, mSettings, mTokenizer->isCPP())) {
+                    break;
                 }
                 if (Token::Match(tok, "%type% (") && nonlocal && isNonConstFunctionCall(tok, mSettings->library)) // non const function call -> bailout if there are nonlocal variables
                     break;
@@ -830,11 +842,23 @@ void CheckCondition::identicalConditionAfterEarlyExitError(const Token *cond1, c
 {
     if (diag(cond1) & diag(cond2))
         return;
-    const std::string cond(cond1 ? cond1->expressionString() : "x");
-    errorPath.emplace_back(ErrorPathItem(cond1, "first condition"));
-    errorPath.emplace_back(ErrorPathItem(cond2, "second condition"));
 
-    reportError(errorPath, Severity::warning, "identicalConditionAfterEarlyExit", "Identical condition '" + cond + "', second condition is always false", CWE398, false);
+    const bool isReturnValue = cond2 && Token::simpleMatch(cond2->astParent(), "return");
+
+    const std::string cond(cond1 ? cond1->expressionString() : "x");
+    const std::string value = (cond2 && cond2->valueType() && cond2->valueType()->type == ValueType::Type::BOOL) ? "false" : "0";
+
+    errorPath.emplace_back(ErrorPathItem(cond1, "If condition '" + cond + "' is true, the function will return/exit"));
+    errorPath.emplace_back(ErrorPathItem(cond2, (isReturnValue ? "Returning identical expression '" : "Testing identical condition '") + cond + "'"));
+
+    reportError(errorPath,
+                Severity::warning,
+                "identicalConditionAfterEarlyExit",
+                isReturnValue
+                ? ("Identical condition and return expression '" + cond + "', return value is always " + value)
+                : ("Identical condition '" + cond + "', second condition is always false"),
+                CWE398,
+                false);
 }
 
 //---------------------------------------------------------------------------
@@ -919,7 +943,7 @@ static inline T getvalue(const int test, const T value1, const T value2)
         return value2;
     case 5:
         return std::numeric_limits<T>::max();
-    };
+    }
     return 0;
 }
 
@@ -1028,6 +1052,8 @@ void CheckCondition::checkIncorrectLogicOperator()
 
             // 'A && (!A || B)' is equivalent to 'A && B'
             // 'A || (!A && B)' is equivalent to 'A || B'
+            // 'A && (A || B)' is equivalent to 'A'
+            // 'A || (A && B)' is equivalent to 'A'
             if (printStyle &&
                 ((tok->str() == "||" && tok->astOperand2()->str() == "&&") ||
                  (tok->str() == "&&" && tok->astOperand2()->str() == "||"))) {
@@ -1063,12 +1089,37 @@ void CheckCondition::checkIncorrectLogicOperator()
                                             "The condition '" + cond1VerboseMsg + "' is equivalent to '" + cond2VerboseMsg + "'.";
                     redundantConditionError(tok, msg, false);
                     continue;
+                } else if (isSameExpression(mTokenizer->isCPP(), false, tok->astOperand1(), tok2, mSettings->library, true, true)) {
+                    std::string expr1(tok->astOperand1()->expressionString());
+                    std::string expr2(tok->astOperand2()->astOperand1()->expressionString());
+                    std::string expr3(tok->astOperand2()->astOperand2()->expressionString());
+                    // make copy for later because the original string might get overwritten
+                    const std::string expr1VerboseMsg = expr1;
+                    const std::string expr2VerboseMsg = expr2;
+                    const std::string expr3VerboseMsg = expr3;
+
+                    if (expr1.length() + expr2.length() + expr3.length() > 50U) {
+                        expr1 = "A";
+                        expr2 = "A";
+                        expr3 = "B";
+                    }
+
+                    const std::string cond1 = expr1 + " " + tok->str() + " (" + expr2 + " " + tok->astOperand2()->str() + " " + expr3 + ")";
+                    const std::string cond2 = expr1;
+
+                    const std::string cond1VerboseMsg = expr1VerboseMsg + " " + tok->str() + " " + expr2VerboseMsg + " " + tok->astOperand2()->str() + " " + expr3VerboseMsg;
+                    const std::string cond2VerboseMsg = expr1VerboseMsg;
+                    // for the --verbose message, transform the actual condition and print it
+                    const std::string msg = tok2->expressionString() + ". '" + cond1 + "' is equivalent to '" + cond2 + "'\n"
+                                            "The condition '" + cond1VerboseMsg + "' is equivalent to '" + cond2VerboseMsg + "'.";
+                    redundantConditionError(tok, msg, false);
+                    continue;
                 }
             }
 
             // Comparison #1 (LHS)
             const Token *comp1 = tok->astOperand1();
-            if (comp1 && comp1->str() == tok->str())
+            if (comp1->str() == tok->str())
                 comp1 = comp1->astOperand2();
 
             // Comparison #2 (RHS)
@@ -1333,11 +1384,30 @@ void CheckCondition::alwaysTrueFalse()
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
     for (const Scope * scope : symbolDatabase->functionScopes) {
         for (const Token* tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
-
             if (tok->link()) // don't write false positives when templates are used
                 continue;
             if (!tok->hasKnownIntValue())
                 continue;
+            {
+                // is this a condition..
+                const Token *parent = tok->astParent();
+                while (Token::Match(parent, "%oror%|&&"))
+                    parent = parent->astParent();
+                if (!parent)
+                    continue;
+                const Token *condition = nullptr;
+                if (parent->str() == "?" && precedes(tok, parent))
+                    condition = parent->astOperand1();
+                else if (Token::Match(parent->previous(), "if|while ("))
+                    condition = parent->astOperand2();
+                else if (Token::simpleMatch(parent, "return"))
+                    condition = parent->astOperand1();
+                else if (parent->str() == ";" && parent->astParent() && parent->astParent()->astParent() && Token::simpleMatch(parent->astParent()->astParent()->previous(), "for ("))
+                    condition = parent->astOperand1();
+                else
+                    continue;
+                (void)condition;
+            }
             // Skip already diagnosed values
             if (diag(tok, false))
                 continue;
@@ -1349,62 +1419,31 @@ void CheckCondition::alwaysTrueFalse()
                 continue;
             if (Token::Match(tok, "%comp%") && isSameExpression(mTokenizer->isCPP(), true, tok->astOperand1(), tok->astOperand2(), mSettings->library, true, true))
                 continue;
+            if (isConstVarExpression(tok, "[|(|&|+|-|*|/|%|^|>>|<<"))
+                continue;
 
             const bool constIfWhileExpression =
                 tok->astParent() && Token::Match(tok->astTop()->astOperand1(), "if|while") && !tok->astTop()->astOperand1()->isConstexpr() &&
                 (Token::Match(tok->astParent(), "%oror%|&&") || Token::Match(tok->astParent()->astOperand1(), "if|while"));
             const bool constValExpr = tok->isNumber() && Token::Match(tok->astParent(),"%oror%|&&|?"); // just one number in boolean expression
             const bool compExpr = Token::Match(tok, "%comp%|!"); // a compare expression
-            const bool returnStatement = Token::simpleMatch(tok->astTop(), "return") &&
-                                         Token::Match(tok->astParent(), "%oror%|&&|return");
             const bool ternaryExpression = Token::simpleMatch(tok->astParent(), "?");
+            const bool returnExpression = Token::simpleMatch(tok->astTop(), "return") && (tok->isComparisonOp() || Token::Match(tok, "&&|%oror%"));
 
-            if (!(constIfWhileExpression || constValExpr || compExpr || returnStatement || ternaryExpression))
-                continue;
-
-            if (returnStatement && (!scope->function || !Token::simpleMatch(scope->function->retDef, "bool")))
-                continue;
-
-            if (returnStatement && isConstVarExpression(tok))
-                continue;
-
-            if (returnStatement && Token::simpleMatch(tok->astParent(), "return") && tok->variable() && (
-                    !tok->variable()->isLocal() ||
-                    tok->variable()->isReference() ||
-                    tok->variable()->isConst() ||
-                    !isVariableChanged(tok->variable(), mSettings, mTokenizer->isCPP())))
-                continue;
-
-            // Don't warn in assertions. Condition is often 'always true' by intention.
-            // If platform,defines,etc cause 'always false' then that is not dangerous neither.
-            bool assertFound = false;
-            for (const Token * tok2 = tok->astParent(); tok2 ; tok2 = tok2->astParent()) { // move backwards and try to find "assert"
-                if (tok2->str() == "(" && tok2->astOperand2()) {
-                    const std::string& str = tok2->previous()->str();
-                    if ((str.find("assert")!=std::string::npos || str.find("ASSERT")!=std::string::npos))
-                        assertFound = true;
-                    break;
-                }
-            }
-            if (assertFound)
+            if (!(constIfWhileExpression || constValExpr || compExpr || ternaryExpression || returnExpression))
                 continue;
 
             // Don't warn when there are expanded macros..
             bool isExpandedMacro = false;
-            std::stack<const Token*> tokens;
-            tokens.push(tok);
-            while (!tokens.empty()) {
-                const Token *tok2 = tokens.top();
-                tokens.pop();
+            visitAstNodes(tok, [&](const Token * tok2) {
                 if (!tok2)
-                    continue;
-                tokens.push(tok2->astOperand1());
-                tokens.push(tok2->astOperand2());
+                    return ChildrenToVisit::none;
                 if (tok2->isExpandedMacro()) {
                     isExpandedMacro = true;
-                    break;
+                    return ChildrenToVisit::done;
                 }
-            }
+                return ChildrenToVisit::op1_and_op2;
+            });
             if (isExpandedMacro)
                 continue;
             for (const Token *parent = tok; parent; parent = parent->astParent()) {
@@ -1418,25 +1457,23 @@ void CheckCondition::alwaysTrueFalse()
 
             // don't warn when condition checks sizeof result
             bool hasSizeof = false;
-            tokens.push(tok);
-            while (!tokens.empty()) {
-                const Token *tok2 = tokens.top();
-                tokens.pop();
+            bool hasNonNumber = false;
+            visitAstNodes(tok, [&](const Token * tok2) {
                 if (!tok2)
-                    continue;
+                    return ChildrenToVisit::none;
                 if (tok2->isNumber())
-                    continue;
+                    return ChildrenToVisit::none;
                 if (Token::simpleMatch(tok2->previous(), "sizeof (")) {
                     hasSizeof = true;
-                    continue;
+                    return ChildrenToVisit::none;
                 }
                 if (tok2->isComparisonOp() || tok2->isArithmeticalOp()) {
-                    tokens.push(tok2->astOperand1());
-                    tokens.push(tok2->astOperand2());
+                    return ChildrenToVisit::op1_and_op2;
                 } else
-                    break;
-            }
-            if (tokens.empty() && hasSizeof)
+                    hasNonNumber = true;
+                return ChildrenToVisit::none;
+            });
+            if (!hasNonNumber && hasSizeof)
                 continue;
 
             alwaysTrueFalseError(tok, &tok->values().front());
@@ -1446,15 +1483,15 @@ void CheckCondition::alwaysTrueFalse()
 
 void CheckCondition::alwaysTrueFalseError(const Token *tok, const ValueFlow::Value *value)
 {
-    const bool condvalue = value && (value->intvalue != 0);
+    const bool alwaysTrue = value && (value->intvalue != 0);
     const std::string expr = tok ? tok->expressionString() : std::string("x");
-    const std::string errmsg = "Condition '" + expr + "' is always " + (condvalue ? "true" : "false");
+    const std::string errmsg = "Condition '" + expr + "' is always " + (alwaysTrue ? "true" : "false");
     const ErrorPath errorPath = getErrorPath(tok, value, errmsg);
     reportError(errorPath,
                 Severity::style,
                 "knownConditionTrueFalse",
                 errmsg,
-                (condvalue ? CWE571 : CWE570), false);
+                (alwaysTrue ? CWE571 : CWE570), false);
 }
 
 void CheckCondition::checkInvalidTestForOverflow()

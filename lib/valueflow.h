@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
+#include "mathlib.h"
 #include "utils.h"
 
 #include <list>
@@ -34,6 +35,7 @@ class Settings;
 class SymbolDatabase;
 class Token;
 class TokenList;
+class ValueType;
 class Variable;
 
 namespace ValueFlow {
@@ -68,6 +70,7 @@ namespace ValueFlow {
               conditional(false),
               defaultArg(false),
               indirect(0),
+              path(0),
               lifetimeKind(LifetimeKind::Object),
               lifetimeScope(LifetimeScope::Local),
               valueKind(ValueKind::Possible)
@@ -157,11 +160,15 @@ namespace ValueFlow {
                 visitValue(decrement{});
         }
 
-        void invertRange() {
+        void invertBound() {
             if (bound == Bound::Lower)
                 bound = Bound::Upper;
             else if (bound == Bound::Upper)
                 bound = Bound::Lower;
+        }
+
+        void invertRange() {
+            invertBound();
             decreaseRange();
         }
 
@@ -242,21 +249,14 @@ namespace ValueFlow {
 
         int indirect;
 
-        enum class LifetimeKind {Object, Lambda, Iterator, Address} lifetimeKind;
+        /** Path id */
+        MathLib::bigint path;
+
+        enum class LifetimeKind {Object, SubObject, Lambda, Iterator, Address} lifetimeKind;
 
         enum class LifetimeScope { Local, Argument } lifetimeScope;
 
-        static const char * toString(MoveKind moveKind) {
-            switch (moveKind) {
-            case MoveKind::NonMovedVariable:
-                return "NonMovedVariable";
-            case MoveKind::MovedVariable:
-                return "MovedVariable";
-            case MoveKind::ForwardedVariable:
-                return "ForwardedVariable";
-            }
-            return "";
-        }
+        static const char* toString(MoveKind moveKind);
 
         /** How known is this value */
         enum class ValueKind {
@@ -320,6 +320,8 @@ namespace ValueFlow {
     void setValues(TokenList *tokenlist, SymbolDatabase* symboldatabase, ErrorLogger *errorLogger, const Settings *settings);
 
     std::string eitherTheConditionIsRedundant(const Token *condition);
+
+    size_t getSizeOf(const ValueType &vt, const Settings *settings);
 }
 
 struct LifetimeToken {
@@ -351,9 +353,13 @@ struct LifetimeToken {
     }
 };
 
+const Token *parseCompareInt(const Token *tok, ValueFlow::Value &true_value, ValueFlow::Value &false_value);
+
 std::vector<LifetimeToken> getLifetimeTokens(const Token* tok, ValueFlow::Value::ErrorPath errorPath = ValueFlow::Value::ErrorPath{}, int depth = 20);
 
 const Variable* getLifetimeVariable(const Token* tok, ValueFlow::Value::ErrorPath& errorPath, bool* addressOf = nullptr);
+
+const Variable* getLifetimeVariable(const Token* tok);
 
 bool isLifetimeBorrowed(const Token *tok, const Settings *settings);
 

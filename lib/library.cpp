@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <list>
+#include <string>
 
 static std::vector<std::string> getnames(const char *names)
 {
@@ -105,8 +106,8 @@ Library::Error Library::load(const char exename[], const char path[])
         }
 
         while (error == tinyxml2::XML_ERROR_FILE_NOT_FOUND && !cfgfolders.empty()) {
-            const std::string cfgfolder(cfgfolders.front());
-            cfgfolders.pop_front();
+            const std::string cfgfolder(cfgfolders.back());
+            cfgfolders.pop_back();
             const char *sep = (!cfgfolder.empty() && endsWith(cfgfolder,'/') ? "" : "/");
             const std::string filename(cfgfolder + sep + fullfilename);
             error = doc.LoadFile(filename.c_str());
@@ -193,7 +194,9 @@ Library::Error Library::load(const tinyxml2::XMLDocument &doc)
                     temp.groupId = allocationId;
 
                     if (memorynode->Attribute("init", "false"))
-                        returnuninitdata.insert(memorynode->GetText());
+                        temp.initData = false;
+                    else
+                        temp.initData = true;
 
                     const char *arg = memorynode->Attribute("arg");
                     if (arg)
@@ -405,6 +408,9 @@ Library::Error Library::load(const tinyxml2::XMLDocument &doc)
             const char* const opLessAllowed = node->Attribute("opLessAllowed");
             if (opLessAllowed)
                 container.opLessAllowed = std::string(opLessAllowed) == "true";
+            const char* const hasInitializerListConstructor = node->Attribute("hasInitializerListConstructor");
+            if (hasInitializerListConstructor)
+                container.hasInitializerListConstructor = std::string(hasInitializerListConstructor) == "true";
 
             for (const tinyxml2::XMLElement *containerNode = node->FirstChildElement(); containerNode; containerNode = containerNode->NextSiblingElement()) {
                 const std::string containerNodeName = containerNode->Name();
@@ -497,6 +503,14 @@ Library::Error Library::load(const tinyxml2::XMLDocument &doc)
                     const char* const associative = containerNode->Attribute("associative");
                     if (associative)
                         container.stdAssociativeLike = std::string(associative) == "std-like";
+                    const char* const unstable = containerNode->Attribute("unstable");
+                    if (unstable) {
+                        std::string unstableType = unstable;
+                        if (unstableType.find("erase") != std::string::npos)
+                            container.unstableErase = true;
+                        if (unstableType.find("insert") != std::string::npos)
+                            container.unstableInsert = true;
+                    }
                 } else
                     unknown_elements.insert(containerNodeName);
             }
@@ -506,6 +520,22 @@ Library::Error Library::load(const tinyxml2::XMLDocument &doc)
             const char *className = node->Attribute("class-name");
             if (className)
                 smartPointers.insert(className);
+        }
+
+        else if (nodename == "type-checks") {
+            for (const tinyxml2::XMLElement *checkNode = node->FirstChildElement(); checkNode; checkNode = checkNode->NextSiblingElement()) {
+                const std::string &checkName = checkNode->Name();
+                for (const tinyxml2::XMLElement *checkTypeNode = checkNode->FirstChildElement(); checkTypeNode; checkTypeNode = checkTypeNode->NextSiblingElement()) {
+                    const std::string checkTypeName = checkTypeNode->Name();
+                    const char *typeName = checkTypeNode->GetText();
+                    if (!typeName)
+                        continue;
+                    if (checkTypeName == "check")
+                        mTypeChecks[std::pair<std::string,std::string>(checkName, typeName)] = TypeCheck::check;
+                    else if (checkTypeName == "suppress")
+                        mTypeChecks[std::pair<std::string,std::string>(checkName, typeName)] = TypeCheck::suppress;
+                }
+            }
         }
 
         else if (nodename == "podtype") {
@@ -557,17 +587,17 @@ Library::Error Library::load(const tinyxml2::XMLDocument &doc)
                         return Error(MISSING_ATTRIBUTE, "type");
                     platform.insert(type_attribute);
                 } else if (typenodename == "signed")
-                    type._signed = true;
+                    type.mSigned = true;
                 else if (typenodename == "unsigned")
-                    type._unsigned = true;
+                    type.mUnsigned = true;
                 else if (typenodename == "long")
-                    type._long = true;
+                    type.mLong = true;
                 else if (typenodename == "pointer")
-                    type._pointer= true;
+                    type.mPointer= true;
                 else if (typenodename == "ptr_ptr")
-                    type._ptr_ptr = true;
+                    type.mPtrPtr = true;
                 else if (typenodename == "const_ptr")
-                    type._const_ptr = true;
+                    type.mConstPtr = true;
                 else
                     unknown_elements.insert(typenodename);
             }
@@ -663,12 +693,16 @@ Library::Error Library::loadFunction(const tinyxml2::XMLElement * const node, co
             }
             for (const tinyxml2::XMLElement *argnode = functionnode->FirstChildElement(); argnode; argnode = argnode->NextSiblingElement()) {
                 const std::string argnodename = argnode->Name();
+                int indirect = 0;
+                const char * const indirectStr = argnode->Attribute("indirect");
+                if (indirectStr)
+                    indirect = atoi(indirectStr);
                 if (argnodename == "not-bool")
                     ac.notbool = true;
                 else if (argnodename == "not-null")
                     ac.notnull = true;
                 else if (argnodename == "not-uninit")
-                    ac.notuninit = true;
+                    ac.notuninit = indirect;
                 else if (argnodename == "formatstr")
                     ac.formatstr = true;
                 else if (argnodename == "strz")
@@ -676,41 +710,11 @@ Library::Error Library::loadFunction(const tinyxml2::XMLElement * const node, co
                 else if (argnodename == "valid") {
                     // Validate the validation expression
                     const char *p = argnode->GetText();
-                    bool error = false;
-                    bool range = false;
-                    bool has_dot = false;
-
-                    if (!p)
-                        return Error(BAD_ATTRIBUTE_VALUE, "\"\"");
-
-                    error = *p == '.';
-                    for (; *p; p++) {
-                        if (std::isdigit(*p))
-                            error |= (*(p+1) == '-');
-                        else if (*p == ':') {
-                            error |= range | (*(p+1) == '.');
-                            range = true;
-                            has_dot = false;
-                        } else if (*p == '-')
-                            error |= (!std::isdigit(*(p+1)));
-                        else if (*p == ',') {
-                            range = false;
-                            error |= *(p+1) == '.';
-                            has_dot = false;
-                        } else if (*p == '.') {
-                            error |= has_dot | (!std::isdigit(*(p+1)));
-                            has_dot = true;
-                        } else
-                            error = true;
-                    }
-                    if (error)
-                        return Error(BAD_ATTRIBUTE_VALUE, argnode->GetText());
-
+                    if (!isCompliantValidationExpression(p))
+                        return Error(BAD_ATTRIBUTE_VALUE, (!p ? "\"\"" : argnode->GetText()));
                     // Set validation expression
                     ac.valid = argnode->GetText();
-                }
-
-                else if (argnodename == "minsize") {
+                } else if (argnodename == "minsize") {
                     const char *typeattr = argnode->Attribute("type");
                     if (!typeattr)
                         return Error(MISSING_ATTRIBUTE, "type");
@@ -775,6 +779,8 @@ Library::Error Library::loadFunction(const tinyxml2::XMLElement * const node, co
                 else
                     unknown_elements.insert(argnodename);
             }
+            if (ac.notuninit == 0)
+                ac.notuninit = ac.notnull ? 1 : 0;
         } else if (functionnodename == "ignorefunction") {
             func.ignore = true;
         } else if (functionnodename == "formatstr") {
@@ -833,6 +839,56 @@ Library::Error Library::loadFunction(const tinyxml2::XMLElement * const node, co
     }
     return Error(OK);
 }
+
+std::vector<Library::InvalidArgValue> Library::getInvalidArgValues(const std::string &validExpr)
+{
+    std::vector<Library::InvalidArgValue> valid;
+    TokenList tokenList(nullptr);
+    gettokenlistfromvalid(validExpr, tokenList);
+    for (const Token *tok = tokenList.front(); tok; tok = tok ? tok->next() : nullptr) {
+        if (tok->str() == ",")
+            continue;
+        if (Token::Match(tok, ": %num%")) {
+            valid.push_back(InvalidArgValue{InvalidArgValue::le, tok->next()->str(), std::string()});
+            tok = tok->tokAt(2);
+        } else if (Token::Match(tok, "%num% : %num%")) {
+            valid.push_back(InvalidArgValue{InvalidArgValue::range, tok->str(), tok->strAt(2)});
+            tok = tok->tokAt(3);
+        } else if (Token::Match(tok, "%num% :")) {
+            valid.push_back(InvalidArgValue{InvalidArgValue::ge, tok->str(), std::string()});
+            tok = tok->tokAt(2);
+        } else if (Token::Match(tok, "%num%")) {
+            valid.push_back(InvalidArgValue{InvalidArgValue::eq, tok->str(), std::string()});
+            tok = tok->next();
+        }
+    }
+
+    std::vector<Library::InvalidArgValue> invalid;
+    if (valid.empty())
+        return invalid;
+
+    if (valid[0].type == InvalidArgValue::ge || valid[0].type == InvalidArgValue::eq)
+        invalid.push_back(InvalidArgValue{InvalidArgValue::lt, valid[0].op1, std::string()});
+    if (valid.back().type == InvalidArgValue::le || valid.back().type == InvalidArgValue::eq)
+        invalid.push_back(InvalidArgValue{InvalidArgValue::gt, valid[0].op1, std::string()});
+    for (int i = 0; i + 1 < valid.size(); i++) {
+        const InvalidArgValue &v1 = valid[i];
+        const InvalidArgValue &v2 = valid[i + 1];
+        if (v1.type == InvalidArgValue::le && v2.type == InvalidArgValue::ge) {
+            if (v1.isInt()) {
+                MathLib::bigint op1 = MathLib::toLongNumber(v1.op1);
+                MathLib::bigint op2 = MathLib::toLongNumber(v2.op1);
+                if (op1 + 1 == op2 - 1)
+                    invalid.push_back(InvalidArgValue{InvalidArgValue::eq, MathLib::toString(op1 + 1), std::string()});
+                else
+                    invalid.push_back(InvalidArgValue{InvalidArgValue::range, MathLib::toString(op1 + 1), MathLib::toString(op2 - 1)});
+            }
+        }
+    }
+
+    return invalid;
+}
+
 
 bool Library::isIntArgValid(const Token *ftok, int argnr, const MathLib::bigint argvalue) const
 {
@@ -951,7 +1007,7 @@ bool Library::isnullargbad(const Token *ftok, int argnr) const
     return arg && arg->notnull;
 }
 
-bool Library::isuninitargbad(const Token *ftok, int argnr) const
+bool Library::isuninitargbad(const Token *ftok, int argnr, int indirect, bool *hasIndirect) const
 {
     const ArgumentChecks *arg = getarg(ftok, argnr);
     if (!arg) {
@@ -961,7 +1017,9 @@ bool Library::isuninitargbad(const Token *ftok, int argnr) const
         if (it != functions.cend() && it->second.formatstr && !it->second.formatstr_scan)
             return true;
     }
-    return arg && arg->notuninit;
+    if (hasIndirect && arg && arg->notuninit >= 1)
+        *hasIndirect = true;
+    return arg && arg->notuninit >= indirect;
 }
 
 
@@ -1150,6 +1208,44 @@ const Library::WarnInfo* Library::getWarnInfo(const Token* ftok) const
     return &i->second;
 }
 
+bool Library::isCompliantValidationExpression(const char* p)
+{
+    if (!p)
+        return false;
+
+    bool error = false;
+    bool range = false;
+    bool has_dot = false;
+    bool has_E = false;
+
+    error = *p == '.';
+    for (; *p; p++) {
+        if (std::isdigit(*p))
+            error |= (*(p + 1) == '-');
+        else if (*p == ':') {
+            error |= range | (*(p + 1) == '.');
+            range = true;
+            has_dot = false;
+            has_E = false;
+        } else if ((*p == '-')|| (*p == '+'))
+            error |= (!std::isdigit(*(p + 1)));
+        else if (*p == ',') {
+            range = false;
+            error |= *(p + 1) == '.';
+            has_dot = false;
+            has_E = false;
+        } else if (*p == '.') {
+            error |= has_dot | (!std::isdigit(*(p + 1)));
+            has_dot = true;
+        } else if (*p == 'E' || *p == 'e') {
+            error |= has_E;
+            has_E = true;
+        } else
+            return false;
+    }
+    return !error;
+}
+
 bool Library::formatstr_function(const Token* ftok) const
 {
     if (isNotLibraryFunction(ftok))
@@ -1224,6 +1320,17 @@ std::vector<MathLib::bigint> Library::unknownReturnValues(const Token *ftok) con
     return (it == mUnknownReturnValues.end()) ? std::vector<MathLib::bigint>() : it->second;
 }
 
+const Library::Function *Library::getFunction(const Token *ftok) const
+{
+    if (isNotLibraryFunction(ftok))
+        return nullptr;
+    const std::map<std::string, Function>::const_iterator it1 = functions.find(getFunctionName(ftok));
+    if (it1 == functions.cend())
+        return nullptr;
+    return &it1->second;
+}
+
+
 bool Library::hasminsize(const Token *ftok) const
 {
     if (isNotLibraryFunction(ftok))
@@ -1236,6 +1343,23 @@ bool Library::hasminsize(const Token *ftok) const
             return true;
     }
     return false;
+}
+
+Library::ArgumentChecks::Direction Library::getArgDirection(const Token* ftok, int argnr) const
+{
+    const ArgumentChecks* arg = getarg(ftok, argnr);
+    if (arg)
+        return arg->direction;
+    if (formatstr_function(ftok)) {
+        const int fs_argno = formatstr_argno(ftok);
+        if (fs_argno >= 0 && argnr >= fs_argno) {
+            if (formatstr_scan(ftok))
+                return ArgumentChecks::Direction::DIR_OUT;
+            else
+                return ArgumentChecks::Direction::DIR_IN;
+        }
+    }
+    return ArgumentChecks::Direction::DIR_UNKNOWN;
 }
 
 bool Library::ignorefunction(const std::string& functionName) const
@@ -1396,3 +1520,8 @@ CPPCHECKLIB const Library::Container * getLibraryContainer(const Token * tok)
     return tok->valueType()->container;
 }
 
+Library::TypeCheck Library::getTypeCheck(const std::string &check, const std::string &typeName) const
+{
+    auto it = mTypeChecks.find(std::pair<std::string, std::string>(check, typeName));
+    return it == mTypeChecks.end() ? TypeCheck::def : it->second;
+}

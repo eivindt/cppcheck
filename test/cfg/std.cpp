@@ -28,6 +28,14 @@
 #include <cstdarg>
 #include <functional>
 
+void valid_code()
+{
+    std::vector<int> vecInt{0, 1, 2};
+    std::fill_n(vecInt.begin(), 2, 0);
+    vecInt.push_back(1);
+    vecInt.pop_back();
+}
+
 void returnValue_std_isgreater(void)
 {
     // cppcheck-suppress knownConditionTrueFalse
@@ -2032,6 +2040,19 @@ void uninivar_bsearch(void)
     (void)std::bsearch(key,base,num,size,(int(*)(const void*,const void*)) strcmp);
 }
 
+void minsize_bsearch(const void* key, const void* base,
+                     size_t num, size_t size,
+                     int (*compar)(const void*,const void*))
+{
+    int Base [3] = {42, 43, 44};
+
+    (void)std::bsearch(key,Base,2,size,(int(*)(const void*,const void*)) strcmp);
+    (void)std::bsearch(key,Base,3,size,(int(*)(const void*,const void*)) strcmp);
+    (void)std::bsearch(key,Base,4,size,(int(*)(const void*,const void*)) strcmp);
+
+    (void)std::bsearch(key,base,2,size,(int(*)(const void*,const void*)) strcmp);
+}
+
 void uninitvar_qsort(void)
 {
     void *base;
@@ -2892,6 +2913,14 @@ void uninitvar_vsprintf(void)
     (void)std::vsprintf(s,format,arg);
 }
 
+void nullPointer_vsprintf(va_list arg,const char *format)
+{
+    char *s = NULL;
+    (void)std::vsprintf(s,format,arg); // Its allowed to provide 's' as NULL pointer
+    // cppcheck-suppress nullPointer
+    (void)std::vsprintf(s,NULL,arg);
+}
+
 void uninitvar_vswprintf(void)
 {
     wchar_t *s;
@@ -3285,6 +3314,12 @@ void stdalgorithm(const std::list<int> &ints1, const std::list<int> &ints2)
     // cppcheck-suppress mismatchingContainers
     if (std::find(ints1.begin(), ints1.end(), 123) == ints2.end()) {}
 
+    // #9455
+    std::list<int>::const_iterator uninitItBegin;
+    std::list<int>::const_iterator uninitItEnd;
+    // @todo cppcheck-suppress uninitvar
+    if (std::find(uninitItBegin, uninitItEnd, 123) == uninitItEnd) {}
+
     // <!-- InputIterator std::find_if(InputIterator first, InputIterator last, UnaryPredicate val) -->
     // cppcheck-suppress mismatchingContainers
     // cppcheck-suppress ignoredReturnValue
@@ -3327,9 +3362,7 @@ void stdalgorithm(const std::list<int> &ints1, const std::list<int> &ints2)
     // <!-- Function std::for_each(InputIterator first, InputIterator last, Function func) -->
     // cppcheck-suppress mismatchingContainers
     std::for_each(ints1.begin(), ints2.end(), [](int i) {});
-
 }
-
 
 void getline()
 {

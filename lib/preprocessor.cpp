@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,11 @@
 #include <iterator> // back_inserter
 #include <utility>
 
+static bool sameline(const simplecpp::Token *tok1, const simplecpp::Token *tok2)
+{
+    return tok1 && tok2 && tok1->location.sameline(tok2->location);
+}
+
 /**
  * Remove heading and trailing whitespaces from the input parameter.
  * If string is all spaces/tabs, return empty string.
@@ -53,8 +58,8 @@ Directive::Directive(const std::string &_file, const int _linenr, const std::str
 {
 }
 
-bool Preprocessor::missingIncludeFlag;
-bool Preprocessor::missingSystemIncludeFlag;
+std::atomic<bool> Preprocessor::missingIncludeFlag;
+std::atomic<bool> Preprocessor::missingSystemIncludeFlag;
 
 char Preprocessor::macroChar = char(1);
 
@@ -76,20 +81,72 @@ namespace {
     };
 }
 
-static void inlineSuppressions(const simplecpp::TokenList &tokens, Settings &mSettings, std::list<BadInlineSuppression> *bad)
+static bool parseInlineSuppressionCommentToken(const simplecpp::Token *tok, std::list<Suppressions::Suppression> &inlineSuppressions, std::list<BadInlineSuppression> *bad)
 {
-    std::list<Suppressions::Suppression> inlineSuppressions;
-    for (const simplecpp::Token *tok = tokens.cfront(); tok; tok = tok->next) {
-        if (tok->comment) {
-            Suppressions::Suppression s;
-            std::string errmsg;
-            if (!s.parseComment(tok->str(), &errmsg))
-                continue;
-            if (!errmsg.empty())
-                bad->push_back(BadInlineSuppression(tok->location, errmsg));
+    const std::string &comment = tok->str();
+    if (comment.size() < 19)
+        return false;
+    const std::string::size_type pos1 = comment.find_first_not_of("/* \t");
+    if (pos1 == std::string::npos)
+        return false;
+    if (pos1 + 17 >= comment.size())
+        return false;
+    if (comment.compare(pos1, 17, "cppcheck-suppress") != 0)
+        return false;
+
+    // skip spaces after "cppcheck-suppress"
+    const std::string::size_type pos2 = comment.find_first_not_of(" ", pos1+17);
+    if (pos2 == std::string::npos)
+        return false;
+
+    if (comment[pos2] == '[') {
+        // multi suppress format
+        std::string errmsg;
+        std::vector<Suppressions::Suppression> suppressions = Suppressions::parseMultiSuppressComment(comment, &errmsg);
+
+        if (!errmsg.empty())
+            bad->push_back(BadInlineSuppression(tok->location, errmsg));
+
+        for (const Suppressions::Suppression &s : suppressions) {
             if (!s.errorId.empty())
                 inlineSuppressions.push_back(s);
+        }
+    } else {
+        //single suppress format
+        std::string errmsg;
+        Suppressions::Suppression s;
+        if (!s.parseComment(comment, &errmsg))
+            return false;
+
+        if (!s.errorId.empty())
+            inlineSuppressions.push_back(s);
+
+        if (!errmsg.empty())
+            bad->push_back(BadInlineSuppression(tok->location, errmsg));
+    }
+
+    return true;
+}
+
+static void inlineSuppressions(const simplecpp::TokenList &tokens, Settings &mSettings, std::list<BadInlineSuppression> *bad)
+{
+    for (const simplecpp::Token *tok = tokens.cfront(); tok; tok = tok->next) {
+        if (!tok->comment)
             continue;
+
+        std::list<Suppressions::Suppression> inlineSuppressions;
+        if (!parseInlineSuppressionCommentToken(tok, inlineSuppressions, bad))
+            continue;
+
+        if (!sameline(tok->previous, tok)) {
+            // find code after comment..
+            tok = tok->next;
+            while (tok && tok->comment) {
+                parseInlineSuppressionCommentToken(tok, inlineSuppressions, bad);
+                tok = tok->next;
+            }
+            if (!tok)
+                break;
         }
 
         if (inlineSuppressions.empty())
@@ -113,7 +170,6 @@ static void inlineSuppressions(const simplecpp::TokenList &tokens, Settings &mSe
             suppr.lineNumber = tok->location.line;
             mSettings.nomsg.addSuppression(suppr);
         }
-        inlineSuppressions.clear();
     }
 }
 
@@ -164,11 +220,6 @@ void Preprocessor::setDirectives(const simplecpp::TokenList &tokens)
             mDirectives.push_back(directive);
         }
     }
-}
-
-static bool sameline(const simplecpp::Token *tok1, const simplecpp::Token *tok2)
-{
-    return tok1 && tok2 && tok1->location.sameline(tok2->location);
 }
 
 static std::string readcondition(const simplecpp::Token *iftok, const std::set<std::string> &defined, const std::set<std::string> &undefined)
@@ -559,22 +610,47 @@ static bool hasErrors(const simplecpp::OutputList &outputList)
         case simplecpp::Output::INCLUDE_NESTED_TOO_DEEPLY:
         case simplecpp::Output::SYNTAX_ERROR:
         case simplecpp::Output::UNHANDLED_CHAR_ERROR:
+        case simplecpp::Output::EXPLICIT_INCLUDE_NOT_FOUND:
             return true;
         case simplecpp::Output::WARNING:
         case simplecpp::Output::MISSING_HEADER:
         case simplecpp::Output::PORTABILITY_BACKSLASH:
             break;
-        };
+        }
     }
     return false;
 }
 
+void Preprocessor::handleErrors(const simplecpp::OutputList& outputList, bool throwError)
+{
+    const bool showerror = (!mSettings.userDefines.empty() && !mSettings.force);
+    reportOutput(outputList, showerror);
+    if (throwError) {
+        for (const simplecpp::Output& output : outputList) {
+            switch (output.type) {
+            case simplecpp::Output::ERROR:
+            case simplecpp::Output::INCLUDE_NESTED_TOO_DEEPLY:
+            case simplecpp::Output::SYNTAX_ERROR:
+            case simplecpp::Output::UNHANDLED_CHAR_ERROR:
+            case simplecpp::Output::EXPLICIT_INCLUDE_NOT_FOUND:
+                throw output;
+            case simplecpp::Output::WARNING:
+            case simplecpp::Output::MISSING_HEADER:
+            case simplecpp::Output::PORTABILITY_BACKSLASH:
+                break;
+            }
+        }
+    }
+}
 
-void Preprocessor::loadFiles(const simplecpp::TokenList &rawtokens, std::vector<std::string> &files)
+bool Preprocessor::loadFiles(const simplecpp::TokenList &rawtokens, std::vector<std::string> &files)
 {
     const simplecpp::DUI dui = createDUI(mSettings, emptyString, files[0]);
 
-    mTokenLists = simplecpp::load(rawtokens, files, dui, nullptr);
+    simplecpp::OutputList outputList;
+    mTokenLists = simplecpp::load(rawtokens, files, dui, &outputList);
+    handleErrors(outputList, false);
+    return !hasErrors(outputList);
 }
 
 void Preprocessor::removeComments()
@@ -614,23 +690,7 @@ simplecpp::TokenList Preprocessor::preprocess(const simplecpp::TokenList &tokens
     simplecpp::TokenList tokens2(files);
     simplecpp::preprocess(tokens2, tokens1, files, mTokenLists, dui, &outputList, &macroUsage);
 
-    const bool showerror = (!mSettings.userDefines.empty() && !mSettings.force);
-    reportOutput(outputList, showerror);
-    if (throwError && hasErrors(outputList)) {
-        for (const simplecpp::Output &output : outputList) {
-            switch (output.type) {
-            case simplecpp::Output::ERROR:
-            case simplecpp::Output::INCLUDE_NESTED_TOO_DEEPLY:
-            case simplecpp::Output::SYNTAX_ERROR:
-            case simplecpp::Output::UNHANDLED_CHAR_ERROR:
-                throw output;
-            case simplecpp::Output::WARNING:
-            case simplecpp::Output::MISSING_HEADER:
-            case simplecpp::Output::PORTABILITY_BACKSLASH:
-                break;
-            };
-        }
-    }
+    handleErrors(outputList, throwError);
 
     tokens2.removeComments();
 
@@ -717,23 +777,26 @@ void Preprocessor::reportOutput(const simplecpp::OutputList &outputList, bool sh
         case simplecpp::Output::UNHANDLED_CHAR_ERROR:
             error(out.location.file(), out.location.line, out.msg);
             break;
-        };
+        case simplecpp::Output::EXPLICIT_INCLUDE_NOT_FOUND:
+            error(emptyString, 0, out.msg);
+            break;
+        }
     }
 }
 
 void Preprocessor::error(const std::string &filename, unsigned int linenr, const std::string &msg)
 {
-    std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
+    std::list<ErrorMessage::FileLocation> locationList;
     if (!filename.empty()) {
-        const ErrorLogger::ErrorMessage::FileLocation loc(filename, linenr, 0);
+        const ErrorMessage::FileLocation loc(filename, linenr, 0);
         locationList.push_back(loc);
     }
-    mErrorLogger->reportErr(ErrorLogger::ErrorMessage(locationList,
-                            mFile0,
-                            Severity::error,
-                            msg,
-                            "preprocessorErrorDirective",
-                            false));
+    mErrorLogger->reportErr(ErrorMessage(locationList,
+                                         mFile0,
+                                         Severity::error,
+                                         msg,
+                                         "preprocessorErrorDirective",
+                                         false));
 }
 
 // Report that include is missing
@@ -756,19 +819,19 @@ void Preprocessor::missingInclude(const std::string &filename, unsigned int line
         missingIncludeFlag = true;
     if (mErrorLogger && mSettings.checkConfiguration) {
 
-        std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
+        std::list<ErrorMessage::FileLocation> locationList;
         if (!filename.empty()) {
-            ErrorLogger::ErrorMessage::FileLocation loc;
+            ErrorMessage::FileLocation loc;
             loc.line = linenr;
             loc.setfile(Path::toNativeSeparators(filename));
             locationList.push_back(loc);
         }
-        ErrorLogger::ErrorMessage errmsg(locationList, mFile0, Severity::information,
-                                         (headerType==SystemHeader) ?
-                                         "Include file: <" + header + "> not found. Please note: Cppcheck does not need standard library headers to get proper results." :
-                                         "Include file: \"" + header + "\" not found.",
-                                         (headerType==SystemHeader) ? "missingIncludeSystem" : "missingInclude",
-                                         false);
+        ErrorMessage errmsg(locationList, mFile0, Severity::information,
+                            (headerType==SystemHeader) ?
+                            "Include file: <" + header + "> not found. Please note: Cppcheck does not need standard library headers to get proper results." :
+                            "Include file: \"" + header + "\" not found.",
+                            (headerType==SystemHeader) ? "missingIncludeSystem" : "missingInclude",
+                            false);
         mErrorLogger->reportInfo(errmsg);
     }
 }
@@ -806,10 +869,10 @@ bool Preprocessor::validateCfg(const std::string &cfg, const std::list<simplecpp
 void Preprocessor::validateCfgError(const std::string &file, const unsigned int line, const std::string &cfg, const std::string &macro)
 {
     const std::string id = "ConfigurationNotChecked";
-    std::list<ErrorLogger::ErrorMessage::FileLocation> locationList;
-    const ErrorLogger::ErrorMessage::FileLocation loc(file, line, 0);
+    std::list<ErrorMessage::FileLocation> locationList;
+    const ErrorMessage::FileLocation loc(file, line, 0);
     locationList.push_back(loc);
-    const ErrorLogger::ErrorMessage errmsg(locationList, mFile0, Severity::information, "Skipping configuration '" + cfg + "' since the value of '" + macro + "' is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.", id, false);
+    const ErrorMessage errmsg(locationList, mFile0, Severity::information, "Skipping configuration '" + cfg + "' since the value of '" + macro + "' is unknown. Use -D if you want to check it. You can use -U to skip it explicitly.", id, false);
     mErrorLogger->reportInfo(errmsg);
 }
 

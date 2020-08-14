@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,22 +16,16 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "checkmemoryleak.h"
-#include "preprocessor.h"
+#include "config.h"
 #include "settings.h"
-#include "simplecpp.h"
-#include "standards.h"
 #include "symboldatabase.h"
 #include "testsuite.h"
 #include "token.h"
 #include "tokenize.h"
-#include "tokenlist.h"
 
 #include <list>
 #include <ostream>
 #include <string>
-#include <vector>
-
-struct InternalError;
 
 
 class TestMemleak : private TestFixture {
@@ -172,6 +166,9 @@ private:
         TEST_CASE(realloc18);
         TEST_CASE(realloc19);
         TEST_CASE(realloc20);
+        TEST_CASE(realloc21);
+        TEST_CASE(realloc22);
+        TEST_CASE(realloc23);
         TEST_CASE(reallocarray1);
     }
 
@@ -380,6 +377,39 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void realloc21() {
+        check("char *foo(char *bs0)\n"
+              "{\n"
+              "    char *bs = bs0;\n"
+              "    bs = realloc(bs, 100);\n"
+              "    if (bs == NULL) return bs0;\n"
+              "    return bs;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void realloc22() {
+        check("void foo(char **bsp)\n"
+              "{\n"
+              "    char *bs = *bsp;\n"
+              "    bs = realloc(bs, 100);\n"
+              "    if (bs == NULL) return;\n"
+              "    *bsp = bs;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void realloc23() {
+        check("void foo(struct ABC *s)\n"
+              "{\n"
+              "    uint32_t *cigar = s->cigar;\n"
+              "    if (!(cigar = realloc(cigar, 100 * sizeof(*cigar))))\n"
+              "        return;\n"
+              "    s->cigar = cigar;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void reallocarray1() {
         check("void foo()\n"
               "{\n"
@@ -419,7 +449,6 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check for memory leaks..
         CheckMemoryLeakInClass checkMemoryLeak(&tokenizer, &settings, this);
@@ -1593,7 +1622,6 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, isCPP ? "test.cpp" : "test.c");
-        tokenizer.simplifyTokenList2();
 
         // Check for memory leaks..
         CheckMemoryLeakStructMember checkMemoryLeakStructMember(&tokenizer, &settings, this);
@@ -1649,6 +1677,8 @@ private:
         TEST_CASE(varid_2); // #5315: Analysis confused by ((variable).attribute) notation
 
         TEST_CASE(customAllocation);
+
+        TEST_CASE(lambdaInForLoop); // #9793
     }
 
     void err() {
@@ -2021,7 +2051,7 @@ private:
               "  ((f)->realm) = strdup(realm);\n"
               "  if(f->realm == NULL) {}\n"
               "}", false);
-        ASSERT_EQUALS("[test.c:6]: (error) Memory leak: f.realm\n", errout.str());
+        TODO_ASSERT_EQUALS("[test.c:6]: (error) Memory leak: f.realm\n", "", errout.str());
     }
 
     void customAllocation() { // #4770
@@ -2033,6 +2063,22 @@ private:
               "    abc.a = myalloc();\n"
               "}", false);
         ASSERT_EQUALS("[test.c:7]: (error) Memory leak: abc.a\n", errout.str());
+    }
+
+    void lambdaInForLoop() { // #9793
+        check(
+            "struct S { int * p{nullptr}; };\n"
+            "int main()\n"
+            "{\n"
+            "    S s;\n"
+            "    s.p = new int[10];\n"
+            "    for (int i = 0; i < 10; ++i) {\n"
+            "        s.p[i] = []() { return 1; }();\n"
+            "    }\n"
+            "    delete[] s.p;\n"
+            "    return 0;\n"
+            "}", true);
+        ASSERT_EQUALS("", errout.str());
     }
 };
 
@@ -2171,6 +2217,16 @@ private:
               "}");
         ASSERT_EQUALS("[test.cpp:2]: (error) Allocation with calloc, memcmp doesn't release it.\n"
                       "[test.cpp:2]: (error) Allocation with strdup, memcmp doesn't release it.\n", errout.str());
+
+        check("void* f(int size) {\n"
+              "    return (void*) malloc(size);\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int* f(int size) {\n"
+              "    return static_cast<int*>(malloc(size));\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void missingAssignment() {
@@ -2222,7 +2278,7 @@ private:
               "{\n"
               "    42,malloc(42);\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (error) Return value of allocation function 'malloc' is not stored.\n", errout.str());
+        TODO_ASSERT_EQUALS("[test.cpp:3]: (error) Return value of allocation function 'malloc' is not stored.\n", "", errout.str());
 
         check("void *f()\n"
               "{\n"

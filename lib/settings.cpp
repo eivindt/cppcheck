@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 
 #include "valueflow.h"
 
-bool Settings::mTerminated;
+std::atomic<bool> Settings::mTerminated;
 
 const char Settings::SafeChecks::XmlRootName[] = "safe-checks";
 const char Settings::SafeChecks::XmlClasses[] = "class-public";
@@ -30,14 +30,20 @@ const char Settings::SafeChecks::XmlExternalVariables[] = "external-variables";
 
 Settings::Settings()
     : mEnabled(0),
+      bugHunting(false),
+      checkAllConfigurations(true),
       checkConfiguration(false),
-      checkLibrary(false),
       checkHeaders(true),
+      checkLibrary(false),
       checkUnusedTemplates(false),
-      debugSimplified(false),
+      clang(false),
+      clangTidy(false),
+      daca(false),
+      debugBugHunting(false),
       debugnormal(false),
-      debugwarnings(false),
+      debugSimplified(false),
       debugtemplate(false),
+      debugwarnings(false),
       dump(false),
       enforcedLang(None),
       exceptionHandling(false),
@@ -45,14 +51,13 @@ Settings::Settings()
       experimental(false),
       force(false),
       inconclusive(false),
-      verification(false),
-      debugVerification(false),
       inlineSuppressions(false),
       jobs(1),
       jointSuppressionReport(false),
       loadAverage(0),
       maxConfigs(12),
       maxCtuDepth(2),
+      maxTemplateRecursion(100),
       preprocessOnly(false),
       quiet(false),
       relativePaths(false),

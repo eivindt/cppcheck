@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -74,11 +74,6 @@ private:
         TEST_CASE(noOperatorEq); // class with memory management should have operator eq
         TEST_CASE(noDestructor); // class with memory management should have destructor
 
-        TEST_CASE(operatorEq1);
-        TEST_CASE(operatorEq2);
-        TEST_CASE(operatorEq3); // ticket #3051
-        TEST_CASE(operatorEq4); // ticket #3114
-        TEST_CASE(operatorEq5); // ticket #3296
         TEST_CASE(operatorEqRetRefThis1);
         TEST_CASE(operatorEqRetRefThis2); // ticket #1323
         TEST_CASE(operatorEqRetRefThis3); // ticket #1405
@@ -175,6 +170,7 @@ private:
         TEST_CASE(const65); // ticket #8693
         TEST_CASE(const66); // ticket #7714
         TEST_CASE(const67); // ticket #9193
+        TEST_CASE(const68); // ticket #6471
         TEST_CASE(const_handleDefaultParameters);
         TEST_CASE(const_passThisToMemberOfOtherClass);
         TEST_CASE(assigningPointerToPointerIsNotAConstOperation);
@@ -202,6 +198,7 @@ private:
         TEST_CASE(constRangeBasedFor); // #5514
         TEST_CASE(const_shared_ptr);
         TEST_CASE(constPtrToConstPtr);
+        TEST_CASE(constTrailingReturnType);
 
         TEST_CASE(initializerListOrder);
         TEST_CASE(initializerListUsage);
@@ -217,10 +214,10 @@ private:
         TEST_CASE(explicitConstructors);
         TEST_CASE(copyCtorAndEqOperator);
 
-        TEST_CASE(unsafeClassDivZero);
-
         TEST_CASE(override1);
         TEST_CASE(overrideCVRefQualifiers);
+
+        TEST_CASE(checkThisUseAfterFree);
 
         TEST_CASE(unsafeClassRefMember);
     }
@@ -235,7 +232,6 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings, this);
@@ -339,7 +335,6 @@ private:
         Tokenizer tokenizer(&settings0, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings0, this);
@@ -449,7 +444,6 @@ private:
         Tokenizer tokenizer(&settings1, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings1, this);
@@ -571,7 +565,6 @@ private:
         Tokenizer tokenizer(&settings0, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings0, this);
@@ -596,7 +589,7 @@ private:
                              "   F&operator=(const F&);\n"
                              "   ~F();\n"
                              "};");
-        ASSERT_EQUALS("[test.cpp:5]: (warning) Value of pointer 'p', which points to allocated memory, is copied in copy constructor instead of allocating new memory.\n", errout.str());
+        TODO_ASSERT_EQUALS("[test.cpp:5]: (warning) Value of pointer 'p', which points to allocated memory, is copied in copy constructor instead of allocating new memory.\n", "", errout.str());
 
         checkCopyConstructor("class F {\n"
                              "   char *p;\n"
@@ -631,7 +624,7 @@ private:
                              "};");
         TODO_ASSERT_EQUALS("[test.cpp:5]: (warning) Value of pointer 'p', which points to allocated memory, is copied in copy constructor instead of allocating new memory.\n"
                            "[test.cpp:5] -> [test.cpp:10]: (warning) Copy constructor does not allocate memory for member 'p' although memory has been allocated in other constructors.\n",
-                           "[test.cpp:5]: (warning) Value of pointer 'p', which points to allocated memory, is copied in copy constructor instead of allocating new memory.\n"
+                           ""
                            , errout.str());
 
         checkCopyConstructor("class kalci\n"
@@ -727,7 +720,7 @@ private:
                              "   ~F();\n"
                              "   F& operator=(const F&f);\n"
                              "};");
-        ASSERT_EQUALS("[test.cpp:8]: (warning) Class 'F' does not have a copy constructor which is recommended since it has dynamic memory/resource allocation(s).\n", errout.str());
+        TODO_ASSERT_EQUALS("[test.cpp:8]: (warning) Class 'F' does not have a copy constructor which is recommended since it has dynamic memory/resource allocation(s).\n", "", errout.str());
 
         checkCopyConstructor("class F\n"
                              "{\n"
@@ -932,6 +925,14 @@ private:
                              "};");
         ASSERT_EQUALS("", errout.str());
 
+        checkCopyConstructor("struct F {\n"
+                             "   int* i;\n"
+                             "   F() { i = new int(); }\n"
+                             "   F(const F &f);\n"
+                             "   F& operator=(const F&);"
+                             "};");
+        ASSERT_EQUALS("[test.cpp:3]: (warning) Struct 'F' does not have a destructor which is recommended since it has dynamic memory/resource allocation(s).\n", errout.str());
+
         checkCopyConstructor("struct Data { int x; int y; };\n"
                              "struct F {\n"
                              "   Data* c;\n"
@@ -962,173 +963,6 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
-    // Check the operator Equal
-    void checkOpertorEq(const char code[]) {
-        // Clear the error log
-        errout.str("");
-
-        settings0.inconclusive = true;
-
-        // Tokenize..
-        Tokenizer tokenizer(&settings0, this);
-        std::istringstream istr(code);
-        tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
-
-        // Check..
-        CheckClass checkClass(&tokenizer, &settings0, this);
-        checkClass.operatorEq();
-    }
-
-    void operatorEq1() {
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    void goo() {}"
-                       "    void operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    void goo() {}"
-                       "    void operator=(const A&)=delete;\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    void goo() {}"
-                       "    void operator=(A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "private:\n"
-                       "    void operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "protected:\n"
-                       "    void operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "private:\n"
-                       "    void operator=(const A&)=delete;\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "    void operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    void goo() {}\n"
-                       "private:\n"
-                       "    void operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    void operator=(const A&);\n"
-                       "};\n"
-                       "class B\n"
-                       "{\n"
-                       "public:\n"
-                       "    void operator=(const B&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n"
-                      "[test.cpp:9]: (style) 'B::operator=' should return 'B &'.\n", errout.str());
-
-        checkOpertorEq("struct A\n"
-                       "{\n"
-                       "    void operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:3]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-
-        checkOpertorEq("struct A\n"
-                       "{\n"
-                       "    void operator=(const A&)=delete;\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-
-        // Ticket #7017
-        checkOpertorEq("template<class T> struct X {\n"
-                       "  inline X(const X& Rhs);\n"
-                       "  inline X<T>& operator =(const X& Rhs);\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-    }
-
-    void operatorEq2() {
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    void * operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    A * operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    const A & operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    B & operator=(const A&);\n"
-                       "};");
-        ASSERT_EQUALS("[test.cpp:4]: (style) 'A::operator=' should return 'A &'.\n", errout.str());
-    }
-
-    void operatorEq3() { // ticket #3051
-        checkOpertorEq("class A\n"
-                       "{\n"
-                       "public:\n"
-                       "    A * operator=(const A*);\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-    }
-
-    void operatorEq4() { // ticket #3114 (infinite loop)
-        checkOpertorEq("struct A {\n"
-                       "    A& operator=(A const& a) { return operator=(&a); }\n"
-                       "    A& operator=(const A*) { return *this; }\n"
-                       "};");
-        ASSERT_EQUALS("", errout.str());
-    }
-
-    void operatorEq5() { // ticket #3296 (virtual operator)
-        checkOpertorEq(
-            "class A {\n"
-            "    virtual A& operator=(const A &a) {return *this};\n"
-            "};");
-        ASSERT_EQUALS("", errout.str());
-    }
-
     // Check that operator Equal returns reference to this
     void checkOpertorEqRetRefThis(const char code[]) {
         // Clear the error log
@@ -1138,7 +972,6 @@ private:
         Tokenizer tokenizer(&settings0, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings0, this);
@@ -1602,7 +1435,6 @@ private:
         Tokenizer tokenizer(&settings1, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings1, this);
@@ -2425,7 +2257,6 @@ private:
         Tokenizer tokenizer(&settings0, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings0, this);
@@ -2691,6 +2522,15 @@ private:
                                "    delete base;\n"
                                "}\n", true);
         ASSERT_EQUALS("[test.cpp:3]: (error) Class 'Base' which is inherited by class 'Derived' does not have a virtual destructor.\n", errout.str());
+
+        // class Base destructor is not virtual but protected -> no error
+        checkVirtualDestructor("class Base {\n"
+                               "public:\n"
+                               "    virtual void foo(){}\n"
+                               "protected:\n"
+                               "    ~Base(){}\n"
+                               "};\n", true);
+        ASSERT_EQUALS("", errout.str());
     }
 
     void checkNoMemset(const char code[]) {
@@ -3298,7 +3138,6 @@ private:
         Tokenizer tokenizer(&settings1, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         // Check..
         CheckClass checkClass(&tokenizer, &settings1, this);
@@ -3336,7 +3175,6 @@ private:
         Tokenizer tokenizer(s, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         CheckClass checkClass(&tokenizer, s, this);
         checkClass.checkConst();
@@ -5678,6 +5516,17 @@ private:
         ASSERT_EQUALS("[test.cpp:8]: (style, inconclusive) Technically the member function 'Test::get' can be const.\n", errout.str());
     }
 
+    void const68() { // #6471
+        checkConst("class MyClass {\n"
+                   "    void clear() {\n"
+                   "        SVecPtr v = (SVecPtr) m_data;\n"
+                   "        v->clear();\n"
+                   "    }\n"
+                   "    void* m_data;\n"
+                   "};\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void const_handleDefaultParameters() {
         checkConst("struct Foo {\n"
                    "    void foo1(int i, int j = 0) {\n"
@@ -6466,6 +6315,14 @@ private:
         ASSERT_EQUALS("[test.cpp:4]: (style, inconclusive) Technically the member function 'Fred::getData' can be const.\n", errout.str());
     }
 
+    void constTrailingReturnType() { // #9814
+        checkConst("struct A {\n"
+                   "    int x = 1;\n"
+                   "    auto get() -> int & { return x; }\n"
+                   "};");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void checkInitializerListOrder(const char code[]) {
         // Clear the error log
         errout.str("");
@@ -6477,7 +6334,6 @@ private:
         Tokenizer tokenizer(&settings0, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         CheckClass checkClass(&tokenizer, &settings0, this);
         checkClass.initializerListOrder();
@@ -6513,7 +6369,6 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         CheckClass checkClass(&tokenizer, &settings, this);
         checkClass.initializationListUsage();
@@ -6712,7 +6567,6 @@ private:
         Tokenizer tokenizer(&settings0, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         CheckClass checkClass(&tokenizer, &settings0, this);
         checkClass.checkSelfInitialization();
@@ -6816,7 +6670,6 @@ private:
         Tokenizer tokenizer(s, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        tokenizer.simplifyTokenList2();
 
         CheckClass checkClass(&tokenizer, s, this);
         checkClass.checkVirtualFunctionCallInConstructor();
@@ -6830,21 +6683,21 @@ private:
                                  "};\n"
                                  "A::A()\n"
                                  "{f();}\n");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:3]: (warning) Virtual function 'f' is called from constructor 'A()' at line 7. Dynamic binding is not used.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:3]: (style) Virtual function 'f' is called from constructor 'A()' at line 7. Dynamic binding is not used.\n", errout.str());
 
         checkVirtualFunctionCall("class A {\n"
                                  "    virtual int f();\n"
                                  "    A() {f();}\n"
                                  "};\n"
                                  "int A::f() { return 1; }\n");
-        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (warning) Virtual function 'f' is called from constructor 'A()' at line 3. Dynamic binding is not used.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (style) Virtual function 'f' is called from constructor 'A()' at line 3. Dynamic binding is not used.\n", errout.str());
 
         checkVirtualFunctionCall("class A : B {\n"
                                  "    int f() override;\n"
                                  "    A() {f();}\n"
                                  "};\n"
                                  "int A::f() { return 1; }\n");
-        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (warning) Virtual function 'f' is called from constructor 'A()' at line 3. Dynamic binding is not used.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:2]: (style) Virtual function 'f' is called from constructor 'A()' at line 3. Dynamic binding is not used.\n", errout.str());
 
         checkVirtualFunctionCall("class B {\n"
                                  "    virtual int f() = 0;\n"
@@ -6854,7 +6707,7 @@ private:
                                  "    A() {f();}\n"
                                  "};\n"
                                  "int A::f() { return 1; }\n");
-        ASSERT_EQUALS("[test.cpp:6] -> [test.cpp:5]: (warning) Virtual function 'f' is called from constructor 'A()' at line 6. Dynamic binding is not used.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:6] -> [test.cpp:5]: (style) Virtual function 'f' is called from constructor 'A()' at line 6. Dynamic binding is not used.\n", errout.str());
 
         checkVirtualFunctionCall("class A\n"
                                  "{\n"
@@ -7058,47 +6911,6 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
-    void checkUnsafeClassDivZero(const char code[]) {
-        // Clear the error log
-        errout.str("");
-        Settings settings;
-        settings.addEnabled("style");
-
-        // Tokenize..
-        Tokenizer tokenizer(&settings, this);
-        std::istringstream istr(code);
-        tokenizer.tokenize(istr, "test.cpp");
-
-        // Check..
-        CheckClass checkClass(&tokenizer, &settings, this);
-        checkClass.checkUnsafeClassDivZero(true);
-    }
-
-    void unsafeClassDivZero() {
-        checkUnsafeClassDivZero("class A {\n"
-                                "public:\n"
-                                "  void dostuff(int x);\n"
-                                "}\n"
-                                "void A::dostuff(int x) { int a = 1000 / x; }");
-        ASSERT_EQUALS("[test.cpp:5]: (style) Public interface of A is not safe. When calling A::dostuff(), if parameter x is 0 that leads to division by zero.\n", errout.str());
-
-        checkUnsafeClassDivZero("class A {\n"
-                                "public:\n"
-                                "  void f1();\n"
-                                "  void f2(int x);\n"
-                                "}\n"
-                                "void A::f1() {}\n"
-                                "void A::f2(int x) { int a = 1000 / x; }");
-        ASSERT_EQUALS("[test.cpp:7]: (style) Public interface of A is not safe. When calling A::f2(), if parameter x is 0 that leads to division by zero.\n", errout.str());
-
-        checkUnsafeClassDivZero("class A {\n"
-                                "public:\n"
-                                "  void operator/(int x);\n"
-                                "}\n"
-                                "void A::operator/(int x) { int a = 1000 / x; }");
-        ASSERT_EQUALS("", errout.str());
-    }
-
     void checkOverride(const char code[]) {
         // Clear the error log
         errout.str("");
@@ -7152,6 +6964,15 @@ private:
                       "};");
         ASSERT_EQUALS("[test.cpp:4] -> [test.cpp:9]: (style) The destructor '~C' overrides a destructor in a base class but is not marked with a 'override' specifier.\n", errout.str());
 
+        checkOverride("struct Base {\n"
+                      "    virtual void foo();\n"
+                      "};\n"
+                      "\n"
+                      "struct Derived: public Base {\n"
+                      "   void foo() override;\n"
+                      "   void foo(int);\n"
+                      "};");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void overrideCVRefQualifiers() {
@@ -7192,6 +7013,160 @@ private:
     void unsafeClassRefMember() {
         checkUnsafeClassRefMember("class C { C(const std::string &s) : s(s) {} const std::string &s; };");
         ASSERT_EQUALS("[test.cpp:1]: (warning) Unsafe class: The const reference member 'C::s' is initialized by a const reference constructor argument. You need to be careful about lifetime issues.\n", errout.str());
+    }
+
+    void checkThisUseAfterFree(const char code[]) {
+        // Clear the error log
+        errout.str("");
+
+        // Tokenize..
+        Tokenizer tokenizer(&settings1, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
+
+        // Check..
+        CheckClass checkClass(&tokenizer, &settings1, this);
+        checkClass.checkThisUseAfterFree();
+    }
+
+    void checkThisUseAfterFree() {
+        setMultiline();
+
+        // Calling method..
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void dostuff() { delete mInstance; hello(); }\n"
+                              "private:\n"
+                              "  static C *mInstance;\n"
+                              "  void hello() {}\n"
+                              "};");
+        ASSERT_EQUALS("test.cpp:3:warning:Calling method 'hello()' when 'this' might be invalid\n"
+                      "test.cpp:5:note:Assuming 'mInstance' is used as 'this'\n"
+                      "test.cpp:3:note:Delete 'mInstance', invalidating 'this'\n"
+                      "test.cpp:3:note:Call method when 'this' is invalid\n",
+                      errout.str());
+
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void dostuff() { mInstance.reset(); hello(); }\n"
+                              "private:\n"
+                              "  static std::shared_ptr<C> mInstance;\n"
+                              "  void hello() {}\n"
+                              "};");
+        ASSERT_EQUALS("test.cpp:3:warning:Calling method 'hello()' when 'this' might be invalid\n"
+                      "test.cpp:5:note:Assuming 'mInstance' is used as 'this'\n"
+                      "test.cpp:3:note:Delete 'mInstance', invalidating 'this'\n"
+                      "test.cpp:3:note:Call method when 'this' is invalid\n",
+                      errout.str());
+
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void dostuff() { reset(); hello(); }\n"
+                              "private:\n"
+                              "  static std::shared_ptr<C> mInstance;\n"
+                              "  void hello();\n"
+                              "  void reset() { mInstance.reset(); }\n"
+                              "};");
+        ASSERT_EQUALS("test.cpp:3:warning:Calling method 'hello()' when 'this' might be invalid\n"
+                      "test.cpp:5:note:Assuming 'mInstance' is used as 'this'\n"
+                      "test.cpp:7:note:Delete 'mInstance', invalidating 'this'\n"
+                      "test.cpp:3:note:Call method when 'this' is invalid\n",
+                      errout.str());
+
+        // Use member..
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void dostuff() { delete self; x = 123; }\n"
+                              "private:\n"
+                              "  static C *self;\n"
+                              "  int x;\n"
+                              "};");
+        ASSERT_EQUALS("test.cpp:3:warning:Using member 'x' when 'this' might be invalid\n"
+                      "test.cpp:5:note:Assuming 'self' is used as 'this'\n"
+                      "test.cpp:3:note:Delete 'self', invalidating 'this'\n"
+                      "test.cpp:3:note:Call method when 'this' is invalid\n",
+                      errout.str());
+
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void dostuff() { delete self; x[1] = 123; }\n"
+                              "private:\n"
+                              "  static C *self;\n"
+                              "  std::map<int,int> x;\n"
+                              "};");
+        ASSERT_EQUALS("test.cpp:3:warning:Using member 'x' when 'this' might be invalid\n"
+                      "test.cpp:5:note:Assuming 'self' is used as 'this'\n"
+                      "test.cpp:3:note:Delete 'self', invalidating 'this'\n"
+                      "test.cpp:3:note:Call method when 'this' is invalid\n",
+                      errout.str());
+
+        // Assign 'shared_from_this()' to non-static smart pointer
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void hold() { mInstance = shared_from_this(); }\n"
+                              "  void dostuff() { mInstance.reset(); hello(); }\n"
+                              "private:\n"
+                              "  std::shared_ptr<C> mInstance;\n"
+                              "  void hello() {}\n"
+                              "};");
+        ASSERT_EQUALS("test.cpp:4:warning:Calling method 'hello()' when 'this' might be invalid\n"
+                      "test.cpp:6:note:Assuming 'mInstance' is used as 'this'\n"
+                      "test.cpp:4:note:Delete 'mInstance', invalidating 'this'\n"
+                      "test.cpp:4:note:Call method when 'this' is invalid\n",
+                      errout.str());
+
+        // Avoid FP..
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void dostuff() { delete self; x = 123; }\n"
+                              "private:\n"
+                              "  C *self;\n"
+                              "  int x;\n"
+                              "};");
+        ASSERT_EQUALS("", errout.str());
+
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "  void hold() { mInstance = shared_from_this(); }\n"
+                              "  void dostuff() { if (x) { mInstance.reset(); return; } hello(); }\n"
+                              "private:\n"
+                              "  std::shared_ptr<C> mInstance;\n"
+                              "  void hello() {}\n"
+                              "};");
+        ASSERT_EQUALS("", errout.str());
+
+        checkThisUseAfterFree("class C\n"
+                              "{\n"
+                              "public:\n"
+                              "    explicit C(const QString& path) : mPath( path ) {}\n"
+                              "\n"
+                              "    static void initialize(const QString& path) {\n" // <- avoid fp in static method
+                              "        if (instanceSingleton)\n"
+                              "            delete instanceSingleton;\n"
+                              "        instanceSingleton = new C(path);\n"
+                              "    }\n"
+                              "private:\n"
+                              "    static C* instanceSingleton;\n"
+                              "};\n"
+                              "\n"
+                              "C* C::instanceSingleton;");
+        ASSERT_EQUALS("", errout.str());
+
+        // Avoid false positive when pointer is deleted in lambda
+        checkThisUseAfterFree("class C {\n"
+                              "public:\n"
+                              "    void foo();\n"
+                              "    void set() { p = this; }\n"
+                              "    void dostuff() {}\n"
+                              "    C* p;\n"
+                              "};\n"
+                              "\n"
+                              "void C::foo() {\n"
+                              "    auto done = [this] () { delete p; };\n"
+                              "    dostuff();\n"
+                              "    done();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
     }
 };
 

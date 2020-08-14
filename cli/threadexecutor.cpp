@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,6 +36,9 @@
 #include <sys/loadavg.h>
 #endif
 #ifdef THREADING_MODEL_FORK
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
 #include <sys/select.h>
 #include <sys/wait.h>
 #include <fcntl.h>
@@ -114,14 +117,14 @@ int ThreadExecutor::handleRead(int rpipe, unsigned int &result)
     if (type == REPORT_OUT) {
         mErrorLogger.reportOut(buf);
     } else if (type == REPORT_ERROR || type == REPORT_INFO) {
-        ErrorLogger::ErrorMessage msg;
+        ErrorMessage msg;
         msg.deserialize(buf);
 
         if (!mSettings.nomsg.isSuppressed(msg.toSuppressionsErrorMessage())) {
             // Alert only about unique errors
             std::string errmsg = msg.toString(mSettings.verbose);
             if (std::find(mErrorList.begin(), mErrorList.end(), errmsg) == mErrorList.end()) {
-                mErrorList.push_back(errmsg);
+                mErrorList.emplace_back(errmsg);
                 if (type == REPORT_ERROR)
                     mErrorLogger.reportErr(msg);
                 else
@@ -204,10 +207,13 @@ unsigned int ThreadExecutor::check()
                 std::cerr << "#### ThreadExecutor::check, Failed to create child process: "<< std::strerror(errno) << std::endl;
                 std::exit(EXIT_FAILURE);
             } else if (pid == 0) {
+#if defined(__linux__)
+                prctl(PR_SET_PDEATHSIG, SIGHUP);
+#endif
                 close(pipes[0]);
                 mWpipe = pipes[1];
 
-                CppCheck fileChecker(*this, false);
+                CppCheck fileChecker(*this, false, CppCheckExecutor::executeCommand);
                 fileChecker.settings() = mSettings;
                 unsigned int resultOfCheck = 0;
 
@@ -293,14 +299,14 @@ unsigned int ThreadExecutor::check()
                     std::ostringstream oss;
                     oss << "Internal error: Child process crashed with signal " << WTERMSIG(stat);
 
-                    std::list<ErrorLogger::ErrorMessage::FileLocation> locations;
+                    std::list<ErrorMessage::FileLocation> locations;
                     locations.emplace_back(childname, 0, 0);
-                    const ErrorLogger::ErrorMessage errmsg(locations,
-                                                           emptyString,
-                                                           Severity::error,
-                                                           oss.str(),
-                                                           "cppcheckError",
-                                                           false);
+                    const ErrorMessage errmsg(locations,
+                                              emptyString,
+                                              Severity::error,
+                                              oss.str(),
+                                              "cppcheckError",
+                                              false);
 
                     if (!mSettings.nomsg.isSuppressed(errmsg.toSuppressionsErrorMessage()))
                         mErrorLogger.reportErr(errmsg);
@@ -338,14 +344,19 @@ void ThreadExecutor::reportOut(const std::string &outmsg)
     writeToPipe(REPORT_OUT, outmsg);
 }
 
-void ThreadExecutor::reportErr(const ErrorLogger::ErrorMessage &msg)
+void ThreadExecutor::reportErr(const ErrorMessage &msg)
 {
     writeToPipe(REPORT_ERROR, msg.serialize());
 }
 
-void ThreadExecutor::reportInfo(const ErrorLogger::ErrorMessage &msg)
+void ThreadExecutor::reportInfo(const ErrorMessage &msg)
 {
     writeToPipe(REPORT_INFO, msg.serialize());
+}
+
+void ThreadExecutor::bughuntingReport(const std::string &str)
+{
+    writeToPipe(REPORT_VERIFICATION, str.c_str());
 }
 
 #elif defined(THREADING_MODEL_WIN)
@@ -430,7 +441,7 @@ unsigned int __stdcall ThreadExecutor::threadProc(void *args)
     // guard static members of CppCheck against concurrent access
     EnterCriticalSection(&threadExecutor->mFileSync);
 
-    CppCheck fileChecker(*threadExecutor, false);
+    CppCheck fileChecker(*threadExecutor, false, CppCheckExecutor::executeCommand);
     fileChecker.settings() = threadExecutor->mSettings;
 
     for (;;) {
@@ -460,6 +471,8 @@ unsigned int __stdcall ThreadExecutor::threadProc(void *args)
             ++itFileSettings;
             LeaveCriticalSection(&threadExecutor->mFileSync);
             result += fileChecker.check(fs);
+            if (threadExecutor->mSettings.clangTidy)
+                fileChecker.analyseClangTidy(fs);
         }
 
         EnterCriticalSection(&threadExecutor->mFileSync);
@@ -483,17 +496,22 @@ void ThreadExecutor::reportOut(const std::string &outmsg)
 
     LeaveCriticalSection(&mReportSync);
 }
-void ThreadExecutor::reportErr(const ErrorLogger::ErrorMessage &msg)
+void ThreadExecutor::reportErr(const ErrorMessage &msg)
 {
     report(msg, MessageType::REPORT_ERROR);
 }
 
-void ThreadExecutor::reportInfo(const ErrorLogger::ErrorMessage &msg)
+void ThreadExecutor::reportInfo(const ErrorMessage &msg)
 {
-    report(msg, MessageType::REPORT_INFO);
+
 }
 
-void ThreadExecutor::report(const ErrorLogger::ErrorMessage &msg, MessageType msgType)
+void ThreadExecutor::bughuntingReport(const std::string  &/*str*/)
+{
+    // TODO
+}
+
+void ThreadExecutor::report(const ErrorMessage &msg, MessageType msgType)
 {
     if (mSettings.nomsg.isSuppressed(msg.toSuppressionsErrorMessage()))
         return;
@@ -504,7 +522,7 @@ void ThreadExecutor::report(const ErrorLogger::ErrorMessage &msg, MessageType ms
 
     EnterCriticalSection(&mErrorSync);
     if (std::find(mErrorList.begin(), mErrorList.end(), errmsg) == mErrorList.end()) {
-        mErrorList.push_back(errmsg);
+        mErrorList.emplace_back(errmsg);
         reportError = true;
     }
     LeaveCriticalSection(&mErrorSync);
@@ -541,14 +559,18 @@ void ThreadExecutor::reportOut(const std::string &/*outmsg*/)
 {
 
 }
-void ThreadExecutor::reportErr(const ErrorLogger::ErrorMessage &/*msg*/)
+void ThreadExecutor::reportErr(const ErrorMessage &/*msg*/)
 {
 
 }
 
-void ThreadExecutor::reportInfo(const ErrorLogger::ErrorMessage &/*msg*/)
+void ThreadExecutor::reportInfo(const ErrorMessage &/*msg*/)
 {
 
+}
+
+void ThreadExecutor::bughuntingReport(const std::string &/*str*/)
+{
 }
 
 #endif

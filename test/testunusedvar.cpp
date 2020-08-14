@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
  */
 
 #include "checkunusedvar.h"
+#include "preprocessor.h"
 #include "settings.h"
 #include "testsuite.h"
 #include "tokenize.h"
@@ -33,7 +34,11 @@ private:
 
     void run() OVERRIDE {
         settings.addEnabled("style");
+        settings.addEnabled("information");
+        settings.checkLibrary = true;
         LOAD_LIB_2(settings.library, "std.cfg");
+
+        TEST_CASE(isRecordTypeWithoutSideEffects);
 
         TEST_CASE(emptyclass);  // #5355 - False positive: Variable is not assigned a value.
         TEST_CASE(emptystruct);  // #5355 - False positive: Variable is not assigned a value.
@@ -53,6 +58,7 @@ private:
         TEST_CASE(structmember12); // #7179 - FP unused structmember
         TEST_CASE(structmember13); // #3088 - __attribute__((packed))
         TEST_CASE(structmember14); // #6508 - (struct x){1,2,..}
+        TEST_CASE(structmember15); // #3088 - #pragma pack(1)
         TEST_CASE(structmember_sizeof);
 
         TEST_CASE(localvar1);
@@ -146,6 +152,7 @@ private:
         TEST_CASE(localvarconst1);
         TEST_CASE(localvarconst2);
         TEST_CASE(localvarreturn); // ticket #9167
+        TEST_CASE(localvarmaybeunused);
 
         TEST_CASE(localvarthrow); // ticket #3687
 
@@ -159,6 +166,8 @@ private:
         TEST_CASE(localvarStruct5);
         TEST_CASE(localvarStruct6);
         TEST_CASE(localvarStruct7);
+        TEST_CASE(localvarStruct8);
+        TEST_CASE(localvarStruct9);
         TEST_CASE(localvarStructArray);
 
         TEST_CASE(localvarOp);          // Usage with arithmetic operators
@@ -201,21 +210,123 @@ private:
         TEST_CASE(bracesInitCpp11);// #7895 - "int var{123}" initialization
 
         TEST_CASE(argument);
+        TEST_CASE(argumentClass);
         TEST_CASE(escapeAlias); // #9150
+        TEST_CASE(volatileData); // #9280
     }
 
-    void checkStructMemberUsage(const char code[]) {
+    void checkStructMemberUsage(const char code[], const std::list<Directive> *directives=nullptr) {
         // Clear the error buffer..
         errout.str("");
 
+        Preprocessor preprocessor(settings, nullptr);
+        if (directives)
+            preprocessor.setDirectives(*directives);
+
         // Tokenize..
         Tokenizer tokenizer(&settings, this);
+        tokenizer.setPreprocessor(&preprocessor);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
 
         // Check for unused variables..
         CheckUnusedVar checkUnusedVar(&tokenizer, &settings, this);
         checkUnusedVar.checkStructMemberUsage();
+    }
+
+    void isRecordTypeWithoutSideEffects() {
+        functionVariableUsage(
+            "class A {};\n"
+            "void f() {\n"
+            "   A a;\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:3]: (style) Unused variable: a\n", errout.str());
+
+        functionVariableUsage(
+            "class A {};\n"
+            "class B {\n"
+            "public:\n"
+            "   A a;\n"
+            "};\n"
+            "void f() {\n"
+            "   B b;\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:7]: (style) Unused variable: b\n", errout.str());
+
+        functionVariableUsage(
+            "class C {\n"
+            "public:\n"
+            "   C() = default;\n"
+            "};\n"
+            "void f() {\n"
+            "   C c;\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:6]: (style) Unused variable: c\n", errout.str());
+
+        functionVariableUsage(
+            "class D {\n"
+            "public:\n"
+            "   D() {}\n"
+            "};\n"
+            "void f() {\n"
+            "   D d;\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:6]: (style) Unused variable: d\n", errout.str());
+
+        functionVariableUsage(
+            "class E {\n"
+            "public:\n"
+            "   uint32_t u{1};\n"
+            "};\n"
+            "void f() {\n"
+            "   E e;\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:6]: (style) Unused variable: e\n", errout.str());
+
+        // non-empty constructor
+        functionVariableUsage(
+            "class F {\n"
+            "public:\n"
+            "   F() {\n"
+            "       int i =0;\n"
+            "       (void) i;"
+            "   }\n"
+            "};\n"
+            "void f() {\n"
+            "   F f;\n"
+            "}");
+        TODO_ASSERT_EQUALS("error", "", errout.str());
+
+        // side-effect variable
+        functionVariableUsage(
+            "class F {\n"
+            "public:\n"
+            "   F() {\n"
+            "       int i =0;\n"
+            "       (void) i;"
+            "   }\n"
+            "};\n"
+            "class G {\n"
+            "public:\n"
+            "   F f;\n"
+            "};\n"
+            "void f() {\n"
+            "   G g;\n"
+            "}");
+        ASSERT_EQUALS("", errout.str());
+
+        // unknown variable type
+        functionVariableUsage(
+            "class H {\n"
+            "public:\n"
+            "   unknown_type u{1};\n"
+            "};\n"
+            "void f() {\n"
+            "   H h;\n"
+            "}");
+        ASSERT_EQUALS("", errout.str());
+
+
     }
 
     // #5355 - False positive: Variable is not assigned a value.
@@ -466,6 +577,13 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void structmember15() { // #3088
+        std::list<Directive> directives;
+        directives.emplace_back("test.cpp", 1, "#pragma pack(1)");
+        checkStructMemberUsage("\nstruct Foo { int x; int y; };", &directives);
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void structmember_extern() {
         // extern struct => no false positive
         checkStructMemberUsage("extern struct AB\n"
@@ -505,6 +623,17 @@ private:
                                "    ab.b = 0;\n"
                                "}");
         ASSERT_EQUALS("[test.cpp:3]: (style) struct member 'AB::a' is never used.\n", errout.str());
+
+        checkStructMemberUsage("struct A\n"
+                               "{\n"
+                               "    static const int a = 0;\n"
+                               "};\n"
+                               "\n"
+                               "int foo()\n"
+                               "{\n"
+                               "    return A::a;\n"
+                               "}");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void structmember_sizeof() {
@@ -3442,6 +3571,35 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void localvarStruct8() {
+        functionVariableUsage("struct s {\n"
+                              "     union {\n"
+                              "         struct {\n"
+                              "             int fld1 : 16;\n"
+                              "             int fld2 : 16;\n"
+                              "         };\n"
+                              "         int raw;\n"
+                              "     };\n"
+                              "};\n"
+                              "\n"
+                              "void foo() {\n"
+                              "      struct s test;\n"
+                              "      test.raw = 0x100;\n"
+                              "      dostuff(test.fld1, test.fld2);\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void localvarStruct9() {
+        functionVariableUsage("struct XY { int x; int y; };\n"
+                              "\n"
+                              "void foo() {\n"
+                              "      struct XY xy(get());\n"
+                              "      return xy.x + xy.y;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void localvarStructArray() {
         // #3633 - detect that struct array is assigned a value
         functionVariableUsage("void f() {\n"
@@ -3534,13 +3692,18 @@ private:
                               "}");
         ASSERT_EQUALS("", errout.str());
 
-        // FIXME : this is probably inconclusive
-        functionVariableUsage("void f() {\n"
+        functionVariableUsage("void f() {\n"  // unknown class => library configuration is needed
                               "  Fred fred;\n"
                               "  int *a; a = b;\n"
                               "  fred += a;\n"
                               "}");
-        ASSERT_EQUALS("[test.cpp:4]: (style) Variable 'fred' is assigned a value that is never used.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:4]: (information) --check-library: Provide <type-checks><unusedvar> configuration for Fred\n", errout.str());
+
+        functionVariableUsage("void f() {\n"
+                              "  std::pair<int,int> fred;\n"  // class with library configuration
+                              "  fred = x;\n"
+                              "}");
+        ASSERT_EQUALS("[test.cpp:3]: (style) Variable 'fred' is assigned a value that is never used.\n", errout.str());
     }
 
     void localvarFor() {
@@ -3724,6 +3887,13 @@ private:
                               "        x = 0;\n"
                               "    else\n"
                               "        x++;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("void foo(int value) {\n"
+                              "    static int array[16] = {0};\n"
+                              "    if(array[value]) {}\n"
+                              "    array[value] = 1;\n"
                               "}");
         ASSERT_EQUALS("", errout.str());
     }
@@ -4098,6 +4268,87 @@ private:
                               "        bar() {}\n"
                               "    };\n"
                               "    return MyInt;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void localvarmaybeunused() {
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] int x;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("[[nodiscard]] int getX() { return 4; }\n"
+                              "int main() {\n"
+                              "    [[maybe_unused]] int x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("[[nodiscard]] int getX() { return 4; }\n"
+                              "int main() {\n"
+                              "    [[maybe_unused]] int x = getX();\n"
+                              "    x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("[[nodiscard]] int getX() { return 4; }\n"
+                              "int main() {\n"
+                              "    [[maybe_unused]] int x = getX();\n"
+                              "    x = getX();\n"
+                              "    std::cout << x;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] const int x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] const int& x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] const int* x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] int& x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] int* x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] auto x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] auto&& x = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] int x[] = getX();\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] constexpr volatile static int x = 1;\n"
+                              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("[[maybe_unused]] inline int x = 1;");
+        ASSERT_EQUALS("", errout.str());
+
+        functionVariableUsage("int main() {\n"
+                              "    [[maybe_unused]] [[anotherattribute]] const int* = 1;\n"
                               "}");
         ASSERT_EQUALS("", errout.str());
     }
@@ -4571,6 +4822,14 @@ private:
         ASSERT_EQUALS("[test.cpp:2]: (style) Variable 'foo.x' is assigned a value that is never used.\n", errout.str());
     }
 
+    void argumentClass() {
+        functionVariableUsage(
+            "void foo(std::insert_iterator<C> it) {\n"
+            "  it = 123;\n"
+            "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void escapeAlias() {
         functionVariableUsage(
             "struct A {\n"
@@ -4584,6 +4843,15 @@ private:
             "    }\n"
             "};\n"
         );
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void volatileData() {
+        functionVariableUsage(
+            "struct Data { unsigned int n; };\n"
+            "int main() {\n"
+            "  (*(volatile struct Data*)0x4200).n = 1;\n"
+            "}");
         ASSERT_EQUALS("", errout.str());
     }
 };

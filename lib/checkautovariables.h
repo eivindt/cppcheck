@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,13 +24,15 @@
 
 #include "check.h"
 #include "config.h"
+#include "errortypes.h"
 
 #include <string>
 
-class ErrorLogger;
 class Settings;
 class Token;
 class Tokenizer;
+class ErrorLogger;
+class Variable;
 
 /// @addtogroup Checks
 /** @brief Various small checks for automatic variables */

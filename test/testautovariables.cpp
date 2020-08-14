@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -50,6 +50,7 @@ private:
         settings.addEnabled("warning");
         settings.addEnabled("style");
         LOAD_LIB_2(settings.library, "std.cfg");
+        LOAD_LIB_2(settings.library, "qt.cfg");
 
         TEST_CASE(testautovar1);
         TEST_CASE(testautovar2);
@@ -107,6 +108,13 @@ private:
         TEST_CASE(returnReference12);
         TEST_CASE(returnReference13);
         TEST_CASE(returnReference14);
+        TEST_CASE(returnReference15); // #9432
+        TEST_CASE(returnReference16); // #9433
+        TEST_CASE(returnReference16); // #9433
+        TEST_CASE(returnReference17); // #9461
+        TEST_CASE(returnReference18); // #9482
+        TEST_CASE(returnReference19); // #9597
+        TEST_CASE(returnReference20); // #9536
         TEST_CASE(returnReferenceFunction);
         TEST_CASE(returnReferenceContainer);
         TEST_CASE(returnReferenceLiteral);
@@ -678,6 +686,13 @@ private:
               "    if ((char *)data != stack) free (data);\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        // #8923
+        check("void f(char **args1, char *args2[]) {\n"
+              "    free((char **)args1);\n"
+              "    free((char **)args2);\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void testinvaliddealloc_C() {
@@ -1244,6 +1259,92 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void returnReference15() {
+        check("template <class T>\n"
+              "const int& f() {\n"
+              "    static int s;\n"
+              "    return s;\n"
+              "}\n"
+              "template <class T>\n"
+              "const int& f(const T&) {\n"
+              "    return f<T>();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("template <class T>\n"
+              "int g();\n"
+              "template <class T>\n"
+              "const int& f(const T&) {\n"
+              "    return g<T>();\n"
+              "}\n");
+        TODO_ASSERT_EQUALS("error", "", errout.str());
+    }
+
+    void returnReference16() {
+        check("int& f(std::tuple<int>& x) {\n"
+              "    return std::get<0>(x);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int& f(int x) {\n"
+              "    return std::get<0>(std::make_tuple(x));\n"
+              "}\n");
+        TODO_ASSERT_EQUALS("error", "", errout.str());
+    }
+
+    void returnReference17() {
+        check("auto g() -> int&;\n"
+              "int& f() {\n"
+              "    return g();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void returnReference18() {
+        check("template<class T>\n"
+              "auto f(T& x) -> decltype(x);\n"
+              "int& g(int* x) {\n"
+              "    return f(*x);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    // #9597
+    void returnReference19() {
+        check("struct C : B {\n"
+              "    const B &f() const { return (const B &)*this; }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    // #9536
+    void returnReference20() {
+        check("struct a {\n"
+              "    int& operator()() const;\n"
+              "};\n"
+              "int& b() {\n"
+              "    return a()();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("auto a() {\n"
+              "    return []() -> int& {\n"
+              "        static int b;\n"
+              "        return b;\n"
+              "    };\n"
+              "}\n"
+              "const int& c() {\n"
+              "    return a()();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("std::function<int&()> a();\n"
+              "int& b() {\n"
+              "    return a()();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void returnReferenceFunction() {
         check("int& f(int& a) {\n"
               "    return a;\n"
@@ -1544,6 +1645,15 @@ private:
               "void f() {\n"
               "    const int& x = h();\n"
               "    g(&x);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct Data {\n"
+              "    std::string path;\n"
+              "};\n"
+              "const char* foo() {\n"
+              "    const Data& data = getData();\n"
+              "    return data.path.c_str();\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
     }
@@ -1876,8 +1986,9 @@ private:
               "    return get_default(m, k, &x);\n"
               "}\n",
               true);
-        ASSERT_EQUALS(
+        TODO_ASSERT_EQUALS(
             "[test.cpp:9] -> [test.cpp:9] -> [test.cpp:8] -> [test.cpp:9]: (error, inconclusive) Returning pointer to local variable 'x' that will be invalid when returning.\n",
+            "",
             errout.str());
 
         check("std::vector<int> g();\n"
@@ -2018,6 +2129,19 @@ private:
               "    return var->c_str();\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        check("std::string f() {\n"
+              "    std::vector<char> data{};\n"
+              "    data.push_back('a');\n"
+              "    return std::string{ data.data(), data.size() };\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("std::vector<char*> f() {\n"
+              "    char a = 0;\n"
+              "    return std::vector<char*>{&a};\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:3] -> [test.cpp:2] -> [test.cpp:3]: (error) Returning object that points to local variable 'a' that will be invalid when returning.\n", errout.str());
     }
 
     void danglingLifetime() {
@@ -2159,6 +2283,59 @@ private:
               "    char buf[1024];\n"
               "    const char* msg = buf;\n"
               "    m = msg;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // #9201
+        check("int* f() {\n"
+              "    struct a { int m; };\n"
+              "    static a b{0};\n"
+              "    return &b.m;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // #9453
+        check("int *ptr;\n"
+              "void foo(int arr[]) {\n"
+              "    ptr = &arr[2];\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // #9639
+        check("struct Fred {\n"
+              "    std::string s;\n"
+              "};\n"
+              "const Fred &getFred();\n"
+              "const char * f() {\n"
+              "  const Fred &fred = getFred();\n"
+              "  return fred.s.c_str();\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // #9534
+        check("struct A {\n"
+              "    int* x;\n"
+              "};\n"
+              "int* f(int i, std::vector<A>& v) {\n"
+              "    A& y = v[i];\n"
+              "    return &y.x[i];\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // #9712
+        check("std::string f(const char *str) {\n"
+              "    char value[256];\n"
+              "    return value;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        // #9770
+        check("class C {\n"
+              "  std::string f(const char*);\n"
+              "};\n"
+              "std::string C::f(const char*) {\n"
+              "  const char data[] = \"x\";\n"
+              "  return data;\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
     }
@@ -2336,6 +2513,14 @@ private:
               "    return {&x, &x};\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        check("std::vector<std::string> f() {\n"
+              "    std::set<std::string> x;\n"
+              "    x.insert(\"1\");\n"
+              "    x.insert(\"2\");\n"
+              "    return { x.begin(), x.end() };\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void danglingLifetimeImplicitConversion() {
@@ -2391,6 +2576,32 @@ private:
         ASSERT_EQUALS(
             "[test.cpp:1] -> [test.cpp:2] -> [test.cpp:5] -> [test.cpp:5] -> [test.cpp:6]: (error) Using pointer to temporary.\n",
             errout.str());
+
+        check("QString f() {\n"
+              "    QString a(\"dummyValue\");\n"
+              "    const char* b = a.toStdString().c_str();\n"
+              "    QString c = b;\n"
+              "    return c;\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:4]: (error) Using pointer to temporary.\n",
+            errout.str());
+
+        check("auto f(std::string s) {\n"
+              "    const char *x = s.substr(1,2).c_str();\n"
+              "    auto i = s.substr(4,5).begin();\n"
+              "    return *i;\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:4]: (error) Using iterator to temporary.\n",
+            errout.str());
+
+        check("std::string f() {\n"
+              "    std::stringstream tmp;\n"
+              "    const std::string &str = tmp.str();\n"
+              "    return std::string(str.c_str(), 1);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
     }
 
     void invalidLifetime() {
@@ -2455,6 +2666,20 @@ private:
 
         check("int &a[];\n"
               "void b(){int *c = a};\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct A {\n"
+              "    int x;\n"
+              "};\n"
+              "struct B {\n"
+              "    std::function<void()> x;\n"
+              "    void f() {\n"
+              "        this->x = [&] {\n"
+              "            B y;\n"
+              "            return y.x;\n"
+              "        };\n"
+              "    }\n"
+              "};\n");
         ASSERT_EQUALS("", errout.str());
     }
 

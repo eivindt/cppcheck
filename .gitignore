@@ -80,7 +80,6 @@ htmlreport/.tox/
 htmlreport/MANIFEST
 
 # Backup files and stuff from patches
-*.orig
 *.rej
 *~
 
@@ -104,7 +103,10 @@ snap/.snapcraft
 # Manual folder
 man/manual.log
 man/manual.tex
+man/*.pdf
+man/*.html
 
 # CLion
 .idea
 /.metadata/
+cmake-*

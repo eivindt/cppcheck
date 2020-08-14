@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,6 +56,9 @@ static std::string objfiles(const std::vector<std::string> &files)
 
 static void getDeps(const std::string &filename, std::vector<std::string> &depfiles)
 {
+    if (filename == "externals/z3_version.h")
+        return;
+
     static const std::vector<std::string> externalfolders = {"externals",
                                                              "externals/simplecpp",
                                                              "externals/tinyxml"
@@ -412,7 +415,7 @@ int main(int argc, char **argv)
     fout << "\t./testrunner -q\n\n";
     fout << "checkcfg:\tcppcheck validateCFG\n";
     fout << "\t./test/cfg/runtests.sh\n\n";
-    fout << "dmake:\ttools/dmake.o cli/filelister.o $(libcppdir)/pathmatch.o $(libcppdir)/path.o externals/simplecpp/simplecpp.o\n";
+    fout << "dmake:\ttools/dmake.o cli/filelister.o $(libcppdir)/pathmatch.o $(libcppdir)/path.o $(libcppdir)/utils.o externals/simplecpp/simplecpp.o\n";
     fout << "\t$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)\n\n";
     fout << "run-dmake: dmake\n";
     fout << "\t./dmake\n\n";
@@ -468,7 +471,8 @@ int main(int argc, char **argv)
     fout << ".PHONY: validateCFG\n";
     fout << "%.checked:%.cfg\n";
     fout << "\txmllint --noout --relaxng cfg/cppcheck-cfg.rng $<\n";
-    fout << "validateCFG: ${ConfigFilesCHECKED}\n\n";
+    fout << "validateCFG: ${ConfigFilesCHECKED}\n";
+    fout << "\txmllint --noout cfg/cppcheck-cfg.rng\n\n";
     fout << "# Validation of platforms files:\n";
     fout << "PlatformFiles := $(wildcard platforms/*.xml)\n";
     fout << "PlatformFilesCHECKED := $(patsubst %.xml,%.checked,$(PlatformFiles))\n";
@@ -480,10 +484,11 @@ int main(int argc, char **argv)
     fout << "/tmp/errorlist.xml: cppcheck\n";
     fout << "\t./cppcheck --errorlist >$@\n";
     fout << "/tmp/example.xml: cppcheck\n";
-    fout << "\t./cppcheck --xml --enable=all --inconclusive --suppress=operatorEqVarError:*check.h -j 4 cli externals gui lib test 2>/tmp/example.xml\n";
+    fout << "\t./cppcheck --xml --enable=all --inconclusive --max-configs=1 samples 2>/tmp/example.xml\n";
     fout << "createXMLExamples:/tmp/errorlist.xml /tmp/example.xml\n";
     fout << ".PHONY: validateXML\n";
     fout << "validateXML: createXMLExamples\n";
+    fout << "\txmllint --noout cppcheck-errors.rng\n";
     fout << "\txmllint --noout --relaxng cppcheck-errors.rng /tmp/errorlist.xml\n";
     fout << "\txmllint --noout --relaxng cppcheck-errors.rng /tmp/example.xml\n";
     fout << "\ncheckCWEEntries: /tmp/errorlist.xml\n";

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,6 @@
 #include "checkstring.h"
 
 #include "astutils.h"
-#include "errorlogger.h"
 #include "mathlib.h"
 #include "settings.h"
 #include "symboldatabase.h"
@@ -60,7 +59,7 @@ void CheckString::stringLiteralWrite()
         for (const Token* tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
             if (!tok->variable() || !tok->variable()->isPointer())
                 continue;
-            const Token *str = tok->getValueTokenMinStrSize();
+            const Token *str = tok->getValueTokenMinStrSize(mSettings);
             if (!str)
                 continue;
             if (Token::Match(tok, "%var% [") && Token::simpleMatch(tok->linkAt(1), "] ="))
@@ -80,10 +79,11 @@ void CheckString::stringLiteralWriteError(const Token *tok, const Token *strValu
 
     std::string errmsg("Modifying string literal");
     if (strValue) {
-        std::string s = strValue->strValue();
-        if (s.size() > 15U)
-            s = s.substr(0,13) + "..";
-        errmsg += " \"" + s + "\"";
+        std::string s = strValue->str();
+        // 20 is an arbitrary value, the max string length shown in a warning message
+        if (s.size() > 20U)
+            s = s.substr(0,17) + "..\"";
+        errmsg += " " + s;
     }
     errmsg += " directly or indirectly is undefined behaviour.";
 
@@ -179,6 +179,9 @@ void CheckString::checkSuspiciousStringCompare()
             if (Token::Match(varTok, "%char%|%num%|%str%"))
                 std::swap(varTok, litTok);
             else if (!Token::Match(litTok, "%char%|%num%|%str%"))
+                continue;
+
+            if (mTokenizer->isCPP() && (!varTok->valueType() || !varTok->valueType()->isIntegral()))
                 continue;
 
             // Pointer addition?
@@ -327,9 +330,9 @@ void CheckString::incorrectStringCompareError(const Token *tok, const std::strin
 
 void CheckString::incorrectStringBooleanError(const Token *tok, const std::string& string)
 {
-    const bool charLiteral = string[0] == '\'';
+    const bool charLiteral = isCharLiteral(string);
     const std::string literalType = charLiteral ? "char" : "string";
-    const std::string result = (string == "\'\\0\'") ? "false" : "true";
+    const std::string result = getCharLiteral(string) == "\\0" ? "false" : "true";
     reportError(tok,
                 Severity::warning,
                 charLiteral ? "incorrectCharBooleanError" : "incorrectStringBooleanError",
@@ -352,37 +355,32 @@ void CheckString::overlappingStrcmp()
                 continue;
             std::list<const Token *> equals0;
             std::list<const Token *> notEquals0;
-            std::stack<const Token *> tokens;
-            tokens.push(tok);
-            while (!tokens.empty()) {
-                const Token * const t = tokens.top();
-                tokens.pop();
+            visitAstNodes(tok, [&](const Token * t) {
                 if (!t)
-                    continue;
+                    return ChildrenToVisit::none;
                 if (t->str() == "||") {
-                    tokens.push(t->astOperand1());
-                    tokens.push(t->astOperand2());
-                    continue;
+                    return ChildrenToVisit::op1_and_op2;
                 }
                 if (t->str() == "==") {
                     if (Token::simpleMatch(t->astOperand1(), "(") && Token::simpleMatch(t->astOperand2(), "0"))
                         equals0.push_back(t->astOperand1());
                     else if (Token::simpleMatch(t->astOperand2(), "(") && Token::simpleMatch(t->astOperand1(), "0"))
                         equals0.push_back(t->astOperand2());
-                    continue;
+                    return ChildrenToVisit::none;
                 }
                 if (t->str() == "!=") {
                     if (Token::simpleMatch(t->astOperand1(), "(") && Token::simpleMatch(t->astOperand2(), "0"))
                         notEquals0.push_back(t->astOperand1());
                     else if (Token::simpleMatch(t->astOperand2(), "(") && Token::simpleMatch(t->astOperand1(), "0"))
                         notEquals0.push_back(t->astOperand2());
-                    continue;
+                    return ChildrenToVisit::none;
                 }
                 if (t->str() == "!" && Token::simpleMatch(t->astOperand1(), "("))
                     equals0.push_back(t->astOperand1());
                 else if (t->str() == "(")
                     notEquals0.push_back(t);
-            }
+                return ChildrenToVisit::none;
+            });
 
             for (const Token *eq0 : equals0) {
                 for (const Token * ne0 : notEquals0) {

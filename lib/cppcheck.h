@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include "settings.h"
 
 #include <cstddef>
+#include <functional>
 #include <istream>
 #include <list>
 #include <map>
@@ -50,7 +51,9 @@ public:
     /**
      * @brief Constructor.
      */
-    CppCheck(ErrorLogger &errorLogger, bool useGlobalSuppressions);
+    CppCheck(ErrorLogger &errorLogger,
+             bool useGlobalSuppressions,
+             std::function<bool(std::string,std::vector<std::string>,std::string,std::string*)> executeCommand);
 
     /**
      * @brief Destructor.
@@ -136,6 +139,9 @@ public:
      */
     bool analyseWholeProgram();
 
+    /** Analyze all files using clang-tidy */
+    void analyseClangTidy(const ImportProject::FileSettings &fileSettings);
+
     /** analyse whole program use .analyzeinfo files */
     void analyseWholeProgram(const std::string &buildDir, const std::map<std::string, std::size_t> &files);
 
@@ -186,7 +192,7 @@ private:
      * "[filepath:line number] Message", e.g.
      * "[main.cpp:4] Uninitialized member variable"
      */
-    void reportErr(const ErrorLogger::ErrorMessage &msg) OVERRIDE;
+    void reportErr(const ErrorMessage &msg) OVERRIDE;
 
     /**
      * @brief Information about progress is directed here.
@@ -194,6 +200,8 @@ private:
      * @param outmsg Message to show, e.g. "Checking main.cpp..."
      */
     void reportOut(const std::string &outmsg) OVERRIDE;
+
+    void bughuntingReport(const std::string &str) OVERRIDE;
 
     std::list<std::string> mErrorList;
     Settings mSettings;
@@ -203,7 +211,7 @@ private:
     /**
      * Output information messages.
      */
-    void reportInfo(const ErrorLogger::ErrorMessage &msg) OVERRIDE;
+    void reportInfo(const ErrorMessage &msg) OVERRIDE;
 
     ErrorLogger &mErrorLogger;
 
@@ -226,6 +234,9 @@ private:
     std::list<Check::FileInfo*> mFileInfo;
 
     AnalyzerInformation mAnalyzerInformation;
+
+    /** Callback for executing a shell command (exe, args, output) */
+    std::function<bool(std::string,std::vector<std::string>,std::string,std::string*)> mExecuteCommand;
 };
 
 /// @}

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,8 +22,8 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
-#include "errorlogger.h"
 #include "mathlib.h"
+#include "errortypes.h"
 #include "standards.h"
 
 #include <cstddef>
@@ -78,6 +78,7 @@ public:
         int bufferSizeArg1;
         int bufferSizeArg2;
         int reallocArg;
+        bool initData;
     };
 
     /** get allocation info for function */
@@ -142,6 +143,8 @@ public:
         mNoReturn[funcname] = noreturn;
     }
 
+    static bool isCompliantValidationExpression(const char* p);
+
     /** is allocation type memory? */
     static bool ismemory(const int id) {
         return ((id > 0) && ((id & 1) == 0));
@@ -196,7 +199,10 @@ public:
             arrayLike_indexOp(false),
             stdStringLike(false),
             stdAssociativeLike(false),
-            opLessAllowed(true) {
+            opLessAllowed(true),
+            hasInitializerListConstructor(false),
+            unstableErase(false),
+            unstableInsert(false) {
         }
 
         enum class Action {
@@ -219,6 +225,9 @@ public:
         bool stdStringLike;
         bool stdAssociativeLike;
         bool opLessAllowed;
+        bool hasInitializerListConstructor;
+        bool unstableErase;
+        bool unstableInsert;
 
         Action getAction(const std::string& function) const {
             const std::map<std::string, Function>::const_iterator i = functions.find(function);
@@ -242,7 +251,7 @@ public:
         ArgumentChecks() :
             notbool(false),
             notnull(false),
-            notuninit(false),
+            notuninit(-1),
             formatstr(false),
             strz(false),
             optional(false),
@@ -253,7 +262,7 @@ public:
 
         bool         notbool;
         bool         notnull;
-        bool         notuninit;
+        int          notuninit;
         bool         formatstr;
         bool         strz;
         bool         optional;
@@ -291,7 +300,6 @@ public:
         Direction direction;
     };
 
-
     struct Function {
         std::map<int, ArgumentChecks> argumentChecks; // argument nr => argument data
         bool use;
@@ -306,6 +314,7 @@ public:
         Function() : use(false), leakignore(false), isconst(false), ispure(false), useretval(false), ignore(false), formatstr(false), formatstr_scan(false), formatstr_secure(false) {}
     };
 
+    const Function *getFunction(const Token *ftok) const;
     std::map<std::string, Function> functions;
     bool isUse(const std::string& functionName) const;
     bool isLeakIgnore(const std::string& functionName) const;
@@ -318,7 +327,7 @@ public:
     }
 
     bool isnullargbad(const Token *ftok, int argnr) const;
-    bool isuninitargbad(const Token *ftok, int argnr) const;
+    bool isuninitargbad(const Token *ftok, int argnr, int indirect = 0, bool *hasIndirect=nullptr) const;
 
     bool isargformatstr(const Token *ftok, int argnr) const {
         const ArgumentChecks *arg = getarg(ftok, argnr);
@@ -338,6 +347,16 @@ public:
         return arg ? arg->valid : emptyString;
     }
 
+    struct InvalidArgValue {
+        enum Type {le, lt, eq, ge, gt, range} type;
+        std::string op1;
+        std::string op2;
+        bool isInt() const {
+            return MathLib::isInt(op1);
+        }
+    };
+    static std::vector<InvalidArgValue> getInvalidArgValues(const std::string &validExpr);
+
     const ArgumentChecks::IteratorInfo *getArgIteratorInfo(const Token *ftok, int argnr) const {
         const ArgumentChecks *arg = getarg(ftok, argnr);
         return arg && arg->iteratorInfo.it ? &arg->iteratorInfo : nullptr;
@@ -350,10 +369,7 @@ public:
         return arg ? &arg->minsizes : nullptr;
     }
 
-    ArgumentChecks::Direction getArgDirection(const Token *ftok, int argnr) const {
-        const ArgumentChecks *arg = getarg(ftok, argnr);
-        return arg ? arg->direction : ArgumentChecks::Direction::DIR_UNKNOWN;
-    }
+    ArgumentChecks::Direction getArgDirection(const Token* ftok, int argnr) const;
 
     bool markupFile(const std::string &path) const;
 
@@ -403,7 +419,6 @@ public:
         return -1;
     }
 
-    std::set<std::string> returnuninitdata;
     std::vector<std::string> defines; // to provide some library defines
 
     std::set<std::string> smartPointers;
@@ -421,32 +436,32 @@ public:
 
     struct PlatformType {
         PlatformType()
-            : _signed(false)
-            , _unsigned(false)
-            , _long(false)
-            , _pointer(false)
-            , _ptr_ptr(false)
-            , _const_ptr(false) {
+            : mSigned(false)
+            , mUnsigned(false)
+            , mLong(false)
+            , mPointer(false)
+            , mPtrPtr(false)
+            , mConstPtr(false) {
         }
         bool operator == (const PlatformType & type) const {
-            return (_signed == type._signed &&
-                    _unsigned == type._unsigned &&
-                    _long == type._long &&
-                    _pointer == type._pointer &&
-                    _ptr_ptr == type._ptr_ptr &&
-                    _const_ptr == type._const_ptr &&
+            return (mSigned == type.mSigned &&
+                    mUnsigned == type.mUnsigned &&
+                    mLong == type.mLong &&
+                    mPointer == type.mPointer &&
+                    mPtrPtr == type.mPtrPtr &&
+                    mConstPtr == type.mConstPtr &&
                     mType == type.mType);
         }
         bool operator != (const PlatformType & type) const {
             return !(*this == type);
         }
         std::string mType;
-        bool _signed;
-        bool _unsigned;
-        bool _long;
-        bool _pointer;
-        bool _ptr_ptr;
-        bool _const_ptr;
+        bool mSigned;
+        bool mUnsigned;
+        bool mLong;
+        bool mPointer;
+        bool mPtrPtr;
+        bool mConstPtr;
     };
 
     struct Platform {
@@ -475,6 +490,10 @@ public:
     std::string getFunctionName(const Token *ftok) const;
 
     static bool isContainerYield(const Token * const cond, Library::Container::Yield y, const std::string& fallback="");
+
+    /** Suppress/check a type */
+    enum class TypeCheck { def, check, suppress };
+    TypeCheck getTypeCheck(const std::string &check, const std::string &typeName) const;
 
 private:
     // load a <function> xml node
@@ -555,6 +574,7 @@ private:
     std::map<std::string, struct PodType> mPodTypes; // pod types
     std::map<std::string, PlatformType> mPlatformTypes; // platform independent typedefs
     std::map<std::string, Platform> mPlatforms; // platform dependent typedefs
+    std::map<std::pair<std::string,std::string>, TypeCheck> mTypeChecks;
 
     const ArgumentChecks * getarg(const Token *ftok, int argnr) const;
 

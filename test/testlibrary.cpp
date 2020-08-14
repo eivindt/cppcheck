@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "errorlogger.h"
 #include "library.h"
 #include "settings.h"
 #include "standards.h"
@@ -41,6 +40,7 @@ private:
     Settings settings;
 
     void run() OVERRIDE {
+        TEST_CASE(isCompliantValidationExpression);
         TEST_CASE(empty);
         TEST_CASE(function);
         TEST_CASE(function_match_scope);
@@ -71,6 +71,25 @@ private:
         tinyxml2::XMLDocument doc;
         doc.Parse(xmldata);
         return library.load(doc);
+    }
+
+    void isCompliantValidationExpression() {
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("-1"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("1"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("1:"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression(":1"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("-1,42"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("-1,-42"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("-1.0:42.0"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("1.175494e-38:3.402823e+38"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("1.175494e-38,3.402823e+38"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression("1.175494e-38:"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression(":1.175494e-38"));
+        ASSERT_EQUALS(true, Library::isCompliantValidationExpression(":42.0"));
+
+        // Robustness tests
+        ASSERT_EQUALS(false, Library::isCompliantValidationExpression(nullptr));
+        ASSERT_EQUALS(false, Library::isCompliantValidationExpression("x"));
     }
 
     void empty() const {
@@ -229,7 +248,7 @@ private:
 
         Library library;
         ASSERT_EQUALS(true, Library::OK == (readLibrary(library, xmldata)).errorcode);
-        ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[1].notuninit);
+        ASSERT_EQUALS(0, library.functions["foo"].argumentChecks[1].notuninit);
         ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[2].notnull);
         ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[3].formatstr);
         ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[4].strz);
@@ -248,7 +267,7 @@ private:
 
         Library library;
         ASSERT_EQUALS(true, Library::OK == (readLibrary(library, xmldata)).errorcode);
-        ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[-1].notuninit);
+        ASSERT_EQUALS(0, library.functions["foo"].argumentChecks[-1].notuninit);
     }
 
     void function_arg_variadic() const {
@@ -262,7 +281,7 @@ private:
 
         Library library;
         ASSERT_EQUALS(true, Library::OK == (readLibrary(library, xmldata)).errorcode);
-        ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[-1].notuninit);
+        ASSERT_EQUALS(0, library.functions["foo"].argumentChecks[-1].notuninit);
 
         TokenList tokenList(nullptr);
         std::istringstream istr("foo(a,b,c,d,e);");
@@ -667,11 +686,9 @@ private:
         ASSERT(library.functions.empty());
 
         const Library::AllocFunc* af = library.getAllocFuncInfo("CreateX");
-        ASSERT(af && af->arg == 5);
+        ASSERT(af && af->arg == 5 && !af->initData);
         const Library::AllocFunc* df = library.getDeallocFuncInfo("DeleteX");
         ASSERT(df && df->arg == 2);
-
-        ASSERT(library.returnuninitdata.find("CreateX") != library.returnuninitdata.cend());
     }
 
     void resource() const {
