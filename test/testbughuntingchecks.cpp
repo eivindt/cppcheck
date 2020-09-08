@@ -35,12 +35,16 @@ private:
 #ifdef USE_Z3
         settings.inconclusive = true;
         LOAD_LIB_2(settings.library, "std.cfg");
+        TEST_CASE(checkAssignment);
         TEST_CASE(uninit);
         TEST_CASE(uninit_array);
         TEST_CASE(uninit_function_par);
         TEST_CASE(uninit_malloc);
         TEST_CASE(uninit_struct);
         TEST_CASE(uninit_bailout);
+        TEST_CASE(uninit_fp_smartptr);
+        TEST_CASE(uninit_fp_struct);
+        TEST_CASE(uninit_fp_template_var);
         TEST_CASE(ctu);
 #endif
     }
@@ -51,6 +55,15 @@ private:
         tokenizer.tokenize(istr, "test.cpp");
         errout.str("");
         ExprEngine::runChecks(this, &tokenizer, &settings);
+    }
+
+    void checkAssignment() {
+        check("void foo(int any) { __cppcheck_low__(0) int x; x = any; }");
+        ASSERT_EQUALS("[test.cpp:1]: (error) There is assignment, cannot determine that value is greater or equal with 0\n", errout.str());
+
+        check("struct S { __cppcheck_low__(0) int x; };\n"
+              "void foo(S *s, int any) { s->x = any; }");
+        ASSERT_EQUALS("[test.cpp:2]: (error) There is assignment, cannot determine that value is greater or equal with 0\n", errout.str());
     }
 
     void uninit() {
@@ -162,6 +175,38 @@ private:
               "    int x;\n"
               "    init(a, x);\n"
               "    x++;\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void uninit_fp_smartptr() {
+        check("void foo() {\n"
+              "    std::unique_ptr<std::string> buffer;\n"
+              "    try { } catch (std::exception& e) { }\n"
+              "    doneCallback(std::move(buffer));\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void uninit_fp_struct() {
+        check("struct Pos {\n"
+              "    int x {0};\n"
+              "    int y {0};\n"
+              "};\n"
+              "\n"
+              "void dostuff() {\n"
+              "    auto obj = C {};\n"
+              "    Pos xy;\n"
+              "    foo(xy);\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void uninit_fp_template_var() {
+        check("void foo() {\n"
+              "    X*x = DYNAMIC_CAST(X, p);\n"
+              "    C<int> c;\n"
+              "    f(c);\n"
               "}");
         ASSERT_EQUALS("", errout.str());
     }

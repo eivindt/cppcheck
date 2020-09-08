@@ -169,17 +169,15 @@ std::string astCanonicalType(const Token *expr)
 {
     if (!expr)
         return "";
-    if (expr->variable()) {
-        const Variable *var = expr->variable();
+    std::pair<const Token*, const Token*> decl = Token::typeDecl(expr);
+    if (decl.first && decl.second) {
         std::string ret;
-        for (const Token *type = var->typeStartToken(); Token::Match(type,"%name%|::") && type != var->nameToken(); type = type->next()) {
+        for (const Token *type = decl.first; Token::Match(type,"%name%|::") && type != decl.second; type = type->next()) {
             if (!Token::Match(type, "const|static"))
                 ret += type->str();
         }
         return ret;
-
     }
-    // TODO: handle expressions
     return "";
 }
 
@@ -301,6 +299,10 @@ static T* nextAfterAstRightmostLeafGeneric(T* tok)
     if (!rightmostLeaf || !rightmostLeaf->astOperand1())
         return nullptr;
     do {
+        if (const Token* lam = findLambdaEndToken(rightmostLeaf)) {
+            rightmostLeaf = lam;
+            break;
+        }
         if (rightmostLeaf->astOperand2())
             rightmostLeaf = rightmostLeaf->astOperand2();
         else
@@ -729,6 +731,11 @@ static bool isSameConstantValue(bool macro, const Token * const tok1, const Toke
     return isEqualKnownValue(tok1, tok2);
 }
 
+static bool astIsBoolLike(const Token* tok)
+{
+    return astIsBool(tok) || astIsPointer(tok) || astIsSmartPointer(tok);
+}
+
 bool isSameExpression(bool cpp, bool macro, const Token *tok1, const Token *tok2, const Library& library, bool pure, bool followVar, ErrorPath* errors)
 {
     if (tok1 == nullptr && tok2 == nullptr)
@@ -777,6 +784,45 @@ bool isSameExpression(bool cpp, bool macro, const Token *tok1, const Token *tok2
             return isSameExpression(cpp, macro, tok1->astOperand1(), tok2->astOperand2(), library, pure, followVar, errors) &&
                    isSameExpression(cpp, macro, tok1->astOperand2(), tok2->astOperand1(), library, pure, followVar, errors);
         }
+        const Token* condTok = nullptr;
+        const Token* exprTok = nullptr;
+        if (Token::Match(tok1, "==|!=")) {
+            condTok = tok1;
+            exprTok = tok2;
+        } else if (Token::Match(tok2, "==|!=")) {
+            condTok = tok2;
+            exprTok = tok1;
+        }
+        if (condTok && condTok->astOperand1() && condTok->astOperand2() && !Token::Match(exprTok, "%comp%")) {
+            const Token* varTok1 = nullptr;
+            const Token* varTok2 = exprTok;
+            const ValueFlow::Value* value = nullptr;
+            if (condTok->astOperand1()->hasKnownIntValue()) {
+                value = &condTok->astOperand1()->values().front();
+                varTok1 = condTok->astOperand2();
+            } else if (condTok->astOperand2()->hasKnownIntValue()) {
+                value = &condTok->astOperand2()->values().front();
+                varTok1 = condTok->astOperand1();
+            }
+            if (Token::simpleMatch(exprTok, "!"))
+                varTok2 = exprTok->astOperand1();
+            bool compare = false;
+            if (value) {
+                if (value->intvalue == 0 && Token::simpleMatch(exprTok, "!") && Token::simpleMatch(condTok, "==")) {
+                    compare = true;
+                } else if (value->intvalue == 0 && !Token::simpleMatch(exprTok, "!") && Token::simpleMatch(condTok, "!=")) {
+                    compare = true;
+                } else if (value->intvalue != 0 && Token::simpleMatch(exprTok, "!") && Token::simpleMatch(condTok, "!=")) {
+                    compare = true;
+                } else if (value->intvalue != 0 && !Token::simpleMatch(exprTok, "!") && Token::simpleMatch(condTok, "==")) {
+                    compare = true;
+                }
+
+            }
+            if (compare && astIsBoolLike(varTok1) && astIsBoolLike(varTok2))
+                return isSameExpression(cpp, macro, varTok1, varTok2, library, pure, followVar, errors);
+
+        }
         return false;
     }
     if (macro && (tok1->isExpandedMacro() || tok2->isExpandedMacro() || tok1->isTemplateArg() || tok2->isTemplateArg()))
@@ -795,6 +841,8 @@ bool isSameExpression(bool cpp, bool macro, const Token *tok1, const Token *tok2
                 const Token *lhs = tok1->previous();
                 while (Token::Match(lhs, "(|.|["))
                     lhs = lhs->astOperand1();
+                if (!lhs)
+                    return false;
                 const bool lhsIsConst = (lhs->variable() && lhs->variable()->isConst()) ||
                                         (lhs->valueType() && lhs->valueType()->constness > 0) ||
                                         (Token::Match(lhs, "%var% . %name% (") && library.isFunctionConst(lhs->tokAt(2)));
@@ -907,6 +955,21 @@ bool isOppositeCond(bool isNot, bool cpp, const Token * const cond1, const Token
 {
     if (!cond1 || !cond2)
         return false;
+
+    if (cond1->str() == "&&" && cond2->str() == "&&") {
+        for (const Token* tok1: {
+        cond1->astOperand1(), cond1->astOperand2()
+        }) {
+            for (const Token* tok2: {
+            cond2->astOperand1(), cond2->astOperand2()
+            }) {
+                if (isSameExpression(cpp, true, tok1, tok2, library, pure, followVar, errors)) {
+                    if (isOppositeCond(isNot, cpp, tok1->astSibling(), tok2->astSibling(), library, pure, followVar, errors))
+                        return true;
+                }
+            }
+        }
+    }
 
     if (cond1->str() == "!") {
         if (cond2->str() == "!=") {
@@ -1347,6 +1410,13 @@ static const Variable* getArgumentVar(const Token* tok, int argnr)
     return nullptr;
 }
 
+static bool isCPPCastKeyword(const Token* tok)
+{
+    if (!tok)
+        return false;
+    return endsWith(tok->str(), "_cast", 5);
+}
+
 bool isVariableChangedByFunctionCall(const Token *tok, int indirect, const Settings *settings, bool *inconclusive)
 {
     if (!tok)
@@ -1364,6 +1434,8 @@ bool isVariableChangedByFunctionCall(const Token *tok, int indirect, const Setti
     tok = getTokenArgumentFunction(tok, argnr);
     if (!tok)
         return false; // not a function => variable not changed
+    if (tok->isKeyword() && !isCPPCastKeyword(tok))
+        return false;
     const Token * parenTok = tok->next();
     if (Token::simpleMatch(parenTok, "<") && parenTok->link())
         parenTok = parenTok->link()->next();
@@ -1732,7 +1804,7 @@ bool isLikelyStreamRead(bool cpp, const Token *op)
 
 bool isCPPCast(const Token* tok)
 {
-    return tok && Token::simpleMatch(tok->previous(), "> (") && tok->astOperand2() && tok->astOperand1() && tok->astOperand1()->str().find("_cast") != std::string::npos;
+    return tok && Token::simpleMatch(tok->previous(), "> (") && tok->astOperand2() && tok->astOperand1() && isCPPCastKeyword(tok->astOperand1());
 }
 
 bool isConstVarExpression(const Token *tok, const char* skipMatch)

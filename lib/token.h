@@ -65,6 +65,7 @@ struct TokenImpl {
     nonneg int mFileIndex;
     nonneg int mLineNumber;
     nonneg int mColumn;
+    MathLib::bigint mExprId;
 
     // AST..
     Token *mAstOperand1;
@@ -129,6 +130,7 @@ struct TokenImpl {
         , mFileIndex(0)
         , mLineNumber(0)
         , mColumn(0)
+        , mExprId(0)
         , mAstOperand1(nullptr)
         , mAstOperand2(nullptr)
         , mAstParent(nullptr)
@@ -547,17 +549,20 @@ public:
     void isAttributeNodiscard(const bool value) {
         setFlag(fIsAttributeNodiscard, value);
     }
-    bool isMaybeUnused() const {
-        return getFlag(fIsMaybeUnused);
+    bool isAttributeMaybeUnused() const {
+        return getFlag(fIsAttributeMaybeUnused);
     }
-    void isMaybeUnused(const bool value) {
-        setFlag(fIsMaybeUnused, value);
+    void isAttributeMaybeUnused(const bool value) {
+        setFlag(fIsAttributeMaybeUnused, value);
     }
     void setCppcheckAttribute(TokenImpl::CppcheckAttributes::Type type, MathLib::bigint value) {
         mImpl->setCppcheckAttribute(type, value);
     }
     bool getCppcheckAttribute(TokenImpl::CppcheckAttributes::Type type, MathLib::bigint *value) const {
         return mImpl->getCppcheckAttribute(type, value);
+    }
+    bool hasCppcheckAttributes() const {
+        return nullptr != mImpl->mCppcheckAttributes;
     }
     bool isControlFlowKeyword() const {
         return getFlag(fIsControlFlowKeyword);
@@ -607,6 +612,12 @@ public:
         setFlag(fExternC, b);
     }
 
+    bool isSplittedVarDecl() const {
+        return getFlag(fIsSplitVarDecl);
+    }
+    void isSplittedVarDecl(bool b) {
+        setFlag(fIsSplitVarDecl, b);
+    }
 
     bool isBitfield() const {
         return mImpl->mBits > 0;
@@ -790,6 +801,13 @@ public:
         }
     }
 
+    MathLib::bigint exprId() const {
+        return mImpl->mExprId;
+    }
+    void exprId(MathLib::bigint id) {
+        mImpl->mExprId = id;
+    }
+
     /**
      * For debugging purposes, prints token and all tokens
      * followed by it.
@@ -822,6 +840,35 @@ public:
      */
     static void replace(Token *replaceThis, Token *start, Token *end);
 
+    struct stringifyOptions {
+        bool varid = false;
+        bool exprid = false;
+        bool attributes = false;
+        bool macro = false;
+        bool linenumbers = false;
+        bool linebreaks = false;
+        bool files = false;
+        static stringifyOptions forDebug() {
+            stringifyOptions options;
+            options.attributes = true;
+            options.macro = true;
+            options.linenumbers = true;
+            options.linebreaks = true;
+            options.files = true;
+            return options;
+        }
+        static stringifyOptions forDebugVarId() {
+            stringifyOptions options = forDebug();
+            options.varid = true;
+            return options;
+        }
+        static stringifyOptions forDebugExprId() {
+            stringifyOptions options = forDebug();
+            options.exprid = true;
+            return options;
+        }
+    };
+
     /**
      * Stringify a token
      * @param os The result is shifted into that output stream
@@ -829,6 +876,7 @@ public:
      * @param attributes Print attributes of tokens like "unsigned" in front of it.
      * @param macro Prints $ in front of the token if it was expanded from a macro.
      */
+    void stringify(std::ostream& os, const stringifyOptions& options) const;
     void stringify(std::ostream& os, bool varid, bool attributes, bool macro) const;
 
     /**
@@ -842,6 +890,7 @@ public:
      * @param end Stringification ends before this token is reached. 0 to stringify until end of list.
      * @return Stringified token list as a string
      */
+    std::string stringifyList(const stringifyOptions& options, const std::vector<std::string>* fileNames = nullptr, const Token* end = nullptr) const;
     std::string stringifyList(bool varid, bool attributes, bool linenumbers, bool linebreaks, bool files, const std::vector<std::string>* fileNames = nullptr, const Token* end = nullptr) const;
     std::string stringifyList(const Token* end, bool attributes = true) const;
     std::string stringifyList(bool varid = false) const;
@@ -1139,19 +1188,20 @@ private:
         fIsAttributeNothrow     = (1 << 13), // __attribute__((nothrow)), __declspec(nothrow)
         fIsAttributeUsed        = (1 << 14), // __attribute__((used))
         fIsAttributePacked      = (1 << 15), // __attribute__((packed))
-        fIsControlFlowKeyword   = (1 << 16), // if/switch/while/...
-        fIsOperatorKeyword      = (1 << 17), // operator=, etc
-        fIsComplex              = (1 << 18), // complex/_Complex type
-        fIsEnumType             = (1 << 19), // enumeration type
-        fIsName                 = (1 << 20),
-        fIsLiteral              = (1 << 21),
-        fIsTemplateArg          = (1 << 22),
-        fIsAttributeNodiscard   = (1 << 23), // __attribute__ ((warn_unused_result)), [[nodiscard]]
-        fAtAddress              = (1 << 24), // @ 0x4000
-        fIncompleteVar          = (1 << 25),
-        fConstexpr              = (1 << 26),
-        fExternC                = (1 << 27),
-        fIsMaybeUnused          = (1 << 28), // [[maybe_unsed]]
+        fIsAttributeMaybeUnused = (1 << 16), // [[maybe_unsed]]
+        fIsControlFlowKeyword   = (1 << 17), // if/switch/while/...
+        fIsOperatorKeyword      = (1 << 18), // operator=, etc
+        fIsComplex              = (1 << 19), // complex/_Complex type
+        fIsEnumType             = (1 << 20), // enumeration type
+        fIsName                 = (1 << 21),
+        fIsLiteral              = (1 << 22),
+        fIsTemplateArg          = (1 << 23),
+        fIsAttributeNodiscard   = (1 << 24), // __attribute__ ((warn_unused_result)), [[nodiscard]]
+        fAtAddress              = (1 << 25), // @ 0x4000
+        fIncompleteVar          = (1 << 26),
+        fConstexpr              = (1 << 27),
+        fExternC                = (1 << 28),
+        fIsSplitVarDecl         = (1 << 29), // int a,b; <-- vardecl is split up
     };
 
     Token::Type mTokType;
@@ -1212,6 +1262,26 @@ public:
     }
     const Token * astParent() const {
         return mImpl->mAstParent;
+    }
+    Token * astSibling() {
+        if (!astParent())
+            return nullptr;
+        if (this == astParent()->astOperand1())
+            return astParent()->astOperand2();
+        else if (this == astParent()->astOperand2())
+            return astParent()->astOperand1();
+        return nullptr;
+
+    }
+    const Token * astSibling() const {
+        if (!astParent())
+            return nullptr;
+        if (this == astParent()->astOperand1())
+            return astParent()->astOperand2();
+        else if (this == astParent()->astOperand2())
+            return astParent()->astOperand1();
+        return nullptr;
+
     }
     Token *astTop() {
         Token *ret = this;

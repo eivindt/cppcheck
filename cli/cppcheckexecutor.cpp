@@ -1173,10 +1173,13 @@ bool CppCheckExecutor::executeCommand(std::string exe, std::vector<std::string> 
     output->clear();
 
     std::string joinedArgs;
-    for (const std::string arg: args) {
+    for (const std::string &arg : args) {
         if (!joinedArgs.empty())
             joinedArgs += " ";
-        joinedArgs += arg;
+        if (arg.find(" ") != std::string::npos)
+            joinedArgs += '"' + arg + '"';
+        else
+            joinedArgs += arg;
     }
 
 #ifdef _WIN32

@@ -247,6 +247,21 @@ static void uninit(const Token *tok, const ExprEngine::Value &value, ExprEngine:
             return;
     }
 
+    // variable that is not uninitialized..
+    if (tok->variable() && !tok->variable()->isPointer() && !tok->variable()->isReference()) {
+        // smart pointer is not uninitialized
+        if (tok->variable()->isSmartPointer())
+            return;
+
+        // struct
+        if (tok->variable()->type() && tok->variable()->type()->needInitialization == Type::NeedInitialization::False)
+            return;
+
+        // template variable is not uninitialized
+        if (Token::findmatch(tok->variable()->typeStartToken(), "%name% <", tok->variable()->typeEndToken()))
+            return;
+    }
+
     // lhs in assignment
     if (tok->astParent()->str() == "=" && tok == tok->astParent()->astOperand1())
         return;
@@ -505,14 +520,44 @@ static void checkAssignment(const Token *tok, const ExprEngine::Value &value, Ex
 
     const Token *vartok = lhs->variable()->nameToken();
 
+    bool executable = false;
+    std::string fullName = lhs->variable()->name();
+    for (const Scope *s = lhs->variable()->nameToken()->scope(); s->type != Scope::ScopeType::eGlobal; s = s->nestedIn) {
+        if (s->isExecutable()) {
+            executable = true;
+            break;
+        }
+        fullName = s->className + "::" + fullName;
+    }
+
+    auto getMinMaxValue = [=](TokenImpl::CppcheckAttributes::Type type, MathLib::bigint *val) {
+        if (vartok->getCppcheckAttribute(type, val))
+            return true;
+        if (!executable) {
+            const auto it = dataBase->settings->variableContracts.find(fullName);
+            if (it != dataBase->settings->variableContracts.end()) {
+                const std::string *str;
+                if (type == TokenImpl::CppcheckAttributes::Type::LOW)
+                    str = &it->second.minValue;
+                else if (type == TokenImpl::CppcheckAttributes::Type::HIGH)
+                    str = &it->second.maxValue;
+                else
+                    return false;
+                *val = MathLib::toLongNumber(*str);
+                return !str->empty();
+            }
+        }
+        return false;
+    };
+
     MathLib::bigint low;
-    if (vartok->getCppcheckAttribute(TokenImpl::CppcheckAttributes::Type::LOW, &low)) {
+    if (getMinMaxValue(TokenImpl::CppcheckAttributes::Type::LOW, &low)) {
         if (value.isLessThan(dataBase, low))
             dataBase->reportError(tok, Severity::SeverityType::error, "bughuntingAssign", "There is assignment, cannot determine that value is greater or equal with " + std::to_string(low), CWE_INCORRECT_CALCULATION, false);
     }
 
     MathLib::bigint high;
-    if (vartok->getCppcheckAttribute(TokenImpl::CppcheckAttributes::Type::HIGH, &high)) {
+    if (getMinMaxValue(TokenImpl::CppcheckAttributes::Type::HIGH, &high)) {
         if (value.isGreaterThan(dataBase, high))
             dataBase->reportError(tok, Severity::SeverityType::error, "bughuntingAssign", "There is assignment, cannot determine that value is lower or equal with " + std::to_string(high), CWE_INCORRECT_CALCULATION, false);
     }

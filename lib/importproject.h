@@ -77,6 +77,12 @@ public:
         bool useMfc;
 
         void parseCommand(const std::string &command);
+
+        void parseCommandStd(const std::string& command, std::string::size_type *pos, std::string& defs);
+        void parseCommandDefine(const std::string& command, std::string::size_type *pos, std::string& defs);
+        void parseCommandUndefine(const std::string& command,  std::string::size_type *pos);
+        void parseCommandInclude(const std::string& command,  std::string::size_type *pos);
+        void parseCommandSystemInclude(const std::string& command,  std::string::size_type *pos);
         void setDefines(std::string defs);
         void setIncludePaths(const std::string &basepath, const std::list<std::string> &in, std::map<std::string, std::string, cppcheck::stricmp> &variables);
     };
@@ -150,6 +156,11 @@ namespace CppcheckXml {
     const char FunctionContract[] = "contract";
     const char ContractFunction[] = "function";
     const char ContractExpects[] = "expects";
+    const char VariableContractsElementName[] = "variable-contracts";
+    const char VariableContractItemElementName[] = "var";
+    const char VariableContractVarName[] = "name";
+    const char VariableContractMin[] = "min";
+    const char VariableContractMax[] = "max";
     const char LibrariesElementName[] = "libraries";
     const char LibraryElementName[] = "library";
     const char PlatformElementName[] = "platform";

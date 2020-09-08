@@ -54,7 +54,16 @@ bool CheckCondition::diag(const Token* tok, bool insert)
 {
     if (!tok)
         return false;
-    if (mCondDiags.find(tok) == mCondDiags.end()) {
+    const Token* parent = tok->astParent();
+    bool hasParent = false;
+    while (Token::Match(parent, "&&|%oror%")) {
+        if (mCondDiags.count(parent) != 0) {
+            hasParent = true;
+            break;
+        }
+        parent = parent->astParent();
+    }
+    if (mCondDiags.count(tok) == 0 && !hasParent) {
         if (insert)
             mCondDiags.insert(tok);
         return false;
@@ -692,8 +701,10 @@ void CheckCondition::multiCondition2()
                             if (!firstCondition)
                                 return ChildrenToVisit::none;
                             if (firstCondition->str() == "&&") {
-                                return ChildrenToVisit::op1_and_op2;
-                            } else if (!firstCondition->hasKnownIntValue()) {
+                                if (!isOppositeCond(false, mTokenizer->isCPP(), firstCondition, cond2, mSettings->library, true, true))
+                                    return ChildrenToVisit::op1_and_op2;
+                            }
+                            if (!firstCondition->hasKnownIntValue()) {
                                 if (!isReturnVar && isOppositeCond(false, mTokenizer->isCPP(), firstCondition, cond2, mSettings->library, true, true, &errorPath)) {
                                     if (!isAliased(vars))
                                         oppositeInnerConditionError(firstCondition, cond2, errorPath);
@@ -1239,6 +1250,8 @@ void CheckCondition::checkIncorrectLogicOperator()
 
 void CheckCondition::incorrectLogicOperatorError(const Token *tok, const std::string &condition, bool always, bool inconclusive, ErrorPath errors)
 {
+    if (diag(tok))
+        return;
     errors.emplace_back(tok, "");
     if (always)
         reportError(errors, Severity::warning, "incorrectLogicOperator",
@@ -1254,6 +1267,8 @@ void CheckCondition::incorrectLogicOperatorError(const Token *tok, const std::st
 
 void CheckCondition::redundantConditionError(const Token *tok, const std::string &text, bool inconclusive)
 {
+    if (diag(tok))
+        return;
     reportError(tok, Severity::style, "redundantCondition", "Redundant condition: " + text, CWE398, inconclusive);
 }
 

@@ -13,6 +13,8 @@ import sys
 from xml.etree import ElementTree
 from fnmatch import fnmatch
 
+EXIT_CODE = 0
+
 class Directive:
     """
     Directive class. Contains information about each preprocessor directive in the source code.
@@ -135,6 +137,7 @@ class Token:
         isUnsigned         Is this token a unsigned type
         isSigned           Is this token a signed type
         isExpandedMacro    Is this token a expanded macro token
+        isSplittedVarDecl  Is this token a splitted variable declaration. "int a,b; => int a; int b;"
         varId              varId for token, each variable has a unique non-zero id
         variable           Variable information for this token. See the Variable class.
         function           If this token points at a function call, this attribute has the Function
@@ -183,6 +186,7 @@ class Token:
     isUnsigned = False
     isSigned = False
     isExpandedMacro = False
+    isSplittedVarDecl = False
     varId = None
     variableId = None
     variable = None
@@ -243,6 +247,8 @@ class Token:
                 self.isLogicalOp = True
         if element.get('isExpandedMacro'):
             self.isExpandedMacro = True
+        if element.get('isSplittedVarDecl'):
+            self.isSplittedVarDecl = True
         self.linkId = element.get('link')
         self.link = None
         if element.get('varId'):
@@ -273,10 +279,10 @@ class Token:
         attrs = ["Id", "str", "scopeId", "isName", "isUnsigned", "isSigned",
                 "isNumber", "isInt", "isFloat", "isString", "strlen",
                 "isChar", "isOp", "isArithmeticalOp", "isComparisonOp",
-                "isLogicalOp", "isExpandedMacro", "linkId", "varId",
-                "variableId", "functionId", "valuesId", "valueType",
-                "typeScopeId", "astParentId", "astOperand1Id", "file",
-                "linenr", "column"]
+                "isLogicalOp", "isExpandedMacro", "isSplittedVarDecl",
+                "linkId", "varId", "variableId", "functionId", "valuesId",
+                "valueType", "typeScopeId", "astParentId", "astOperand1Id",
+                "file", "linenr", "column"]
         return "{}({})".format(
             "Token",
             ", ".join(("{}={}".format(a, repr(getattr(self, a))) for a in attrs))
@@ -1102,3 +1108,5 @@ def reportError(location, severity, message, addon, errorId, extra=''):
         if len(extra) > 0:
             message += ' (' + extra + ')'
         sys.stderr.write('%s (%s) %s [%s-%s]\n' % (loc, severity, message, addon, errorId))
+        global EXIT_CODE
+        EXIT_CODE = 1

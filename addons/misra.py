@@ -1638,92 +1638,25 @@ class MisraChecker:
             if maxval >= sz:
                 self.reportError(token, 12, 2)
 
-    def misra_12_3(self, data, rawTokens, filename):
-        # We need an additional check for closing braces using in
-        # initialization lists and function calls, e.g.:
-        # struct S a = {1, 2, 3}, b, c = foo(1, 2), d;
-        #                       ^                 ^
-        end_tokens_map = defaultdict(set)
-
-        skip_to = None
+    def misra_12_3(self, data):
         for token in data.tokenlist:
-            if skip_to:
-                if token == skip_to:
-                    skip_to = None
-                else:
-                    continue
-            # Skip tokens in function call body
-            if token.function and token.next and token.next.str == "(":
-                skip_to = token.next.link
-            # Skip tokens in initializer lists
-            if simpleMatch(token, '= {'):
-                skip_to = token.next.link
-
-            if token.scope.type in ('Enum', 'Class', 'Struct', 'Global'):
+            if token.scope.type in ('Class', 'Struct'):
                 continue
-            # Save last tokens from function calls and initializer lists in
-            # initialization sequence
-            if simpleMatch(token, ') ;') or simpleMatch(token, '} ;'):
-                if (token.isExpandedMacro):
-                    end_tokens_map[token.next.linenr].add(token.next.column)
-                else:
-                    end_tokens_map[token.linenr].add(token.column)
-            if token.str != ',':
-                continue
-            if token.astParent:
-                if token.astParent.str in ('(', '{'):
-                    end_token = token.astParent.link
-                    if end_token:
-                        end_tokens_map[end_token.linenr].add(end_token.column)
-                    continue
-                elif token.astParent.str == ',':
-                    continue
-            self.reportError(token, 12, 3)
-
-        # Cppcheck performs some simplifications in variables declaration code:
-        # int a, b, c;
-        # Will be reresented in dump file as:
-        # int a; int b; int c;
-        name_tokens_map = {}
-        for v in data.variables:
-            if v.isArgument:
-                continue
-            nt = v.nameToken
-            if nt and nt.scope and nt.scope.type not in ('Enum', 'Class', 'Struct'):
-                name_tokens_map.setdefault(nt.linenr, set())
-                name_tokens_map[nt.linenr].add(nt.column)
-        if not name_tokens_map:
-            return
-
-        # Select tokens to check
-        maybe_map = {}
-        for linenr in set(name_tokens_map.keys()) | set(end_tokens_map.keys()):
-            maybe_map[linenr] = name_tokens_map.get(linenr, set())
-            maybe_map[linenr] |= end_tokens_map.get(linenr, set())
-
-        # Check variables declaration code in raw tokens to distinguish ';' and
-        # ',' symbols.
-        STATE_SKIP = 0
-        STATE_CHECK = 1
-        state = STATE_SKIP
-        cur_line = min(maybe_map)
-        for tok in rawTokens:
-            if tok.linenr in maybe_map and tok.column in maybe_map[tok.linenr]:
-                if tok.linenr in end_tokens_map and tok.column in end_tokens_map[tok.linenr]:
-                    if tok.str == ',' or (tok.next and tok.next.str == ','):
-                        self.reportError(tok, 12, 3)
-                        end_tokens_map[tok.linenr].remove(tok.column)
-                state = STATE_CHECK
-                cur_line = tok.linenr
-            if tok.str in ('(', ';', '{'):
-                state = STATE_SKIP
-                if tok.linenr > cur_line:
-                    maybe_map.pop(cur_line)
-                    if not maybe_map:
+            if token.str == ';' and (token.isSplittedVarDecl is True):
+                self.reportError(token, 12, 3)
+            if token.str == ',' and token.astParent and token.astParent.str == ';':
+                self.reportError(token, 12, 3)
+            if token.str == ',' and token.astParent is None:
+                prev = token.previous
+                while prev:
+                    if prev.str == ';':
+                        self.reportError(token, 12, 3)
                         break
-                    cur_line = min(maybe_map)
-            if state == STATE_CHECK and tok.str == ',':
-                self.reportError(tok, 12, 3)
+                    elif prev.str in ')}]':
+                        prev = prev.link
+                    elif prev.str in '({[':
+                        break
+                    prev = prev.previous
 
     def misra_12_4(self, data):
         if typeBits['INT'] == 16:
@@ -2979,7 +2912,7 @@ class MisraChecker:
                 self.executeCheck(1201, self.misra_12_1_sizeof, data.rawTokens)
             self.executeCheck(1201, self.misra_12_1, cfg)
             self.executeCheck(1202, self.misra_12_2, cfg)
-            self.executeCheck(1203, self.misra_12_3, cfg, data.rawTokens, filename)
+            self.executeCheck(1203, self.misra_12_3, cfg)
             self.executeCheck(1204, self.misra_12_4, cfg)
             self.executeCheck(1301, self.misra_13_1, cfg)
             self.executeCheck(1303, self.misra_13_3, cfg)
@@ -3126,7 +3059,6 @@ def main():
     if args.severity:
         checker.setSeverity(args.severity)
 
-    exitCode = 0
     for item in args.dumpfile:
         checker.parseDump(item)
 
@@ -3134,6 +3066,7 @@ def main():
             verify_expected = checker.get_verify_expected()
             verify_actual = checker.get_verify_actual()
 
+            exitCode = 0
             for expected in verify_expected:
                 if expected not in verify_actual:
                     print('Expected but not seen: ' + expected)
@@ -3150,41 +3083,38 @@ def main():
             if exitCode != 0:
                 sys.exit(exitCode)
 
-    # Under normal operation exit with a non-zero exit code
-    # if there were any violations.
-    if not settings.verify:
-        number_of_violations = len(checker.get_violations())
-        if number_of_violations > 0:
-            exitCode = 1
+    if settings.verify:
+        sys.exit(exitCode)
 
-            if settings.show_summary:
-                print("\nMISRA rules violations found:\n\t%s\n" % (
-                    "\n\t".join(["%s: %d" % (viol, len(checker.get_violations(viol))) for viol in
-                                 checker.get_violation_types()])))
+    number_of_violations = len(checker.get_violations())
+    if number_of_violations > 0:
+        if settings.show_summary:
+            print("\nMISRA rules violations found:\n\t%s\n" % (
+                "\n\t".join(["%s: %d" % (viol, len(checker.get_violations(viol))) for viol in
+                             checker.get_violation_types()])))
 
-                rules_violated = {}
-                for severity, ids in checker.get_violations():
-                    for misra_id in ids:
-                        rules_violated[misra_id] = rules_violated.get(misra_id, 0) + 1
-                print("MISRA rules violated:")
-                convert = lambda text: int(text) if text.isdigit() else text
-                misra_sort = lambda key: [convert(c) for c in re.split(r'[\.-]([0-9]*)', key)]
-                for misra_id in sorted(rules_violated.keys(), key=misra_sort):
-                    res = re.match(r'misra-c2012-([0-9]+)\\.([0-9]+)', misra_id)
-                    if res is None:
-                        num = 0
-                    else:
-                        num = int(res.group(1)) * 100 + int(res.group(2))
-                    severity = '-'
-                    if num in checker.ruleTexts:
-                        severity = checker.ruleTexts[num].cppcheck_severity
-                    print("\t%15s (%s): %d" % (misra_id, severity, rules_violated[misra_id]))
+            rules_violated = {}
+            for severity, ids in checker.get_violations():
+                for misra_id in ids:
+                    rules_violated[misra_id] = rules_violated.get(misra_id, 0) + 1
+            print("MISRA rules violated:")
+            convert = lambda text: int(text) if text.isdigit() else text
+            misra_sort = lambda key: [convert(c) for c in re.split(r'[\.-]([0-9]*)', key)]
+            for misra_id in sorted(rules_violated.keys(), key=misra_sort):
+                res = re.match(r'misra-c2012-([0-9]+)\\.([0-9]+)', misra_id)
+                if res is None:
+                    num = 0
+                else:
+                    num = int(res.group(1)) * 100 + int(res.group(2))
+                severity = '-'
+                if num in checker.ruleTexts:
+                    severity = checker.ruleTexts[num].cppcheck_severity
+                print("\t%15s (%s): %d" % (misra_id, severity, rules_violated[misra_id]))
 
     if args.show_suppressed_rules:
         checker.showSuppressedRules()
 
-    sys.exit(exitCode)
-
 
 if __name__ == '__main__':
     main()
+    sys.exit(cppcheckdata.EXIT_CODE)
